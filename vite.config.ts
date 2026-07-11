@@ -9,7 +9,15 @@ export default defineConfig({
     proxy: {
 
       '/cwt': {
-        target: 'http://127.0.0.1:18188',
+        target: 'http://127.0.0.1:18818',
+        changeOrigin: true
+      },
+      '/cw': {
+        target: 'http://127.0.0.1:18818',
+        changeOrigin: true
+      },
+      '/backtest': {
+        target: 'http://127.0.0.1:18818',
         changeOrigin: true
       }
     }

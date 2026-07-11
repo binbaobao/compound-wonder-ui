@@ -6,7 +6,7 @@ interface ApiResult<T> {
   data: T
 }
 
-const API_BASE = '/cwt/share/limitupstockpool'
+const API_BASE = '/cw/backtest'
 
 async function request<T>(url: string): Promise<T> {
   const response = await fetch(url)
