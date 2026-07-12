@@ -36,6 +36,13 @@ const datePicker = ref<HTMLElement | null>(null)
 const dateMenu = ref<HTMLElement | null>(null)
 const reversedTradingDays = computed(() => [...props.tradingDays].reverse())
 
+/** 格式化全市场成交金额，后端单位为亿元。 */
+function formatMarketTurnover(amount: number | null | undefined) {
+  const value = Number(amount ?? 0)
+  if (value > 10000) return `${(value / 10000).toFixed(2)}万亿`
+  return `${Math.round(value)}亿`
+}
+
 const filteredStocks = computed(() => {
   const keyword = props.keyword.trim().toLowerCase()
   const rows = props.stocks.filter(stock => stock.scope === props.scope)
@@ -48,7 +55,7 @@ const filteredStocks = computed(() => {
     if (props.sortMode === 'limitUpDays') return limitUpSortValue(b) - limitUpSortValue(a)
     if (props.sortMode === 'amount') return parseFloat(b.amount) - parseFloat(a.amount)
     if (props.sortMode === 'result') return b.resultRate - a.resultRate
-    return b.strength - a.strength
+    return props.scope === 'recommend' ? b.strength - a.strength : limitUpSortValue(b) - limitUpSortValue(a)
   })
 })
 
@@ -141,6 +148,10 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="emotionSummary" class="stock-emotion">
+      <div class="stock-emotion-highlight">
+        <span>最高 <b>{{ emotionSummary.highestLimitUp }}板</b></span>
+        <span v-if="emotionSummary.leaderCode">龙头：<b>{{ emotionSummary.leaderName || emotionSummary.leaderCode }}</b></span>
+      </div>
       <div class="stock-emotion-row">
         <span>涨停 <b>{{ emotionSummary.limitUpCount }}</b></span>
         <span>连板 <b>{{ emotionSummary.consecutiveLimitUpCount }}</b></span>
@@ -153,9 +164,9 @@ onBeforeUnmount(() => {
         <span>连板率 <b>{{ emotionSummary.consecutiveRate.toFixed(2) }}%</b></span>
         <span>炸板率 <b>{{ emotionSummary.explodeRate.toFixed(2) }}%</b></span>
       </div>
-      <div class="stock-emotion-row compact">
-        <span>最高 <b>{{ emotionSummary.highestLimitUp }}板</b></span>
-        <span v-if="emotionSummary.leaderCode">龙头 <b>{{ emotionSummary.leaderName || emotionSummary.leaderCode }}</b></span>
+      <div class="stock-emotion-highlight stock-emotion-market">
+        <span>涨 / 跌 <b>{{ emotionSummary.risingCount }} / {{ emotionSummary.fallingCount }}</b></span>
+        <span>成交额 <b>{{ formatMarketTurnover(emotionSummary.allMarketTurnoverAmount) }}</b></span>
       </div>
     </div>
 
@@ -197,7 +208,7 @@ onBeforeUnmount(() => {
           @change="emit('update:sortMode', ($event.target as HTMLSelectElement).value)"
         >
           <option value="limitUpDays">按连板次数排序</option>
-          <option value="strength">按强度排序</option>
+          <option v-if="scope === 'recommend'" value="strength">按涨停分排序</option>
           <option value="amount">按成交额排序</option>
           <option value="result">按回测结果排序</option>
         </select>
@@ -220,7 +231,7 @@ onBeforeUnmount(() => {
         <span class="stock-side">
           <b :class="stock.scope">{{ stock.boardLabel }}</b>
           <small>
-            强度 {{ stock.strength }}
+            <template v-if="scope === 'recommend'">涨停分 {{ stock.strength }}</template>
             <template v-if="stock.rz === 1"> · 融</template>
             <template v-if="stock.zz === 1"> · 债</template>
             <template v-if="stock.st === 1"> · ST</template>

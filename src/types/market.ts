@@ -118,7 +118,11 @@ export interface EmotionCycleSummary {
   consecutiveLimitUpCount: number
   explodeCount: number
   limitDownCount: number
+  downLimitCount: number
   highestLimitUp: number
+  risingCount: number
+  fallingCount: number
+  allMarketTurnoverAmount: number
   consecutiveRate: number
   explodeRate: number
   leaderCode?: string

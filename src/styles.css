@@ -286,6 +286,29 @@ button {
   background: var(--panel-soft);
 }
 
+.stock-emotion-highlight {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 10px 0 34px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  color: var(--muted);
+  background: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.stock-emotion-highlight b {
+  color: var(--text);
+  font-size: 17px;
+}
+
+.stock-emotion-market {
+  padding-left: 10px;
+}
+
 .stock-emotion-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

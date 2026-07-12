@@ -267,12 +267,12 @@ async function loadEmotionSummary() {
 }
 
 async function loadDailyBars() {
-  if (!selectedStock.value) {
+  if (!detailDate.value || !selectedStock.value) {
     dailyBars.value = []
     return
   }
   try {
-    dailyBars.value = await fetchDailyBars(selectedStock.value.code, 300)
+    dailyBars.value = await fetchDailyBars(selectedStock.value.code, detailDate.value, 300, 100)
   } catch (error) {
     dailyBars.value = []
   }
@@ -334,6 +334,7 @@ watch(detailDate, async () => {
     await nextTick()
     centerSelectedDetailDate()
   }
+  await loadDailyBars()
   await loadMinuteBars()
 })
 

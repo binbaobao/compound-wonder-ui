@@ -29,8 +29,13 @@ export function fetchStockPool(date: string, scope: StockScope, limit = 200): Pr
   return request<StockPoolItem[]>(`${API_BASE}/stocks?${params}`)
 }
 
-export function fetchDailyBars(stockCode: string, limit = 300): Promise<ChartBar[]> {
-  const params = new URLSearchParams({ stockCode, limit: String(limit) })
+export function fetchDailyBars(stockCode: string, date: string, beforeLimit = 300, afterLimit = 100): Promise<ChartBar[]> {
+  const params = new URLSearchParams({
+    stockCode,
+    date,
+    beforeLimit: String(beforeLimit),
+    afterLimit: String(afterLimit)
+  })
   return request<ChartBar[]>(`${API_BASE}/daily-bars?${params}`)
 }
 
