@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowDownAZ, CalendarDays, Search } from 'lucide-vue-next'
+import { CalendarDays, Search } from 'lucide-vue-next'
 import type { EmotionCalendarDay, EmotionCycleSummary, StockPoolItem, StockScope } from '../types/market'
 
 const props = defineProps<{
@@ -8,7 +8,6 @@ const props = defineProps<{
   scope: StockScope
   selectedCode: string
   keyword: string
-  sortMode: string
   tradeDate: string
   tradingDays: EmotionCalendarDay[]
   emotionSummary?: EmotionCycleSummary | null
@@ -16,7 +15,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:keyword': [value: string]
-  'update:sortMode': [value: string]
   'update:tradeDate': [value: string]
   'update:scope': [value: StockScope]
   select: [stock: StockPoolItem]
@@ -52,15 +50,34 @@ const filteredStocks = computed(() => {
   })
 
   return [...rows].sort((a, b) => {
-    if (props.sortMode === 'limitUpDays') return limitUpSortValue(b) - limitUpSortValue(a)
-    if (props.sortMode === 'amount') return parseFloat(b.amount) - parseFloat(a.amount)
-    if (props.sortMode === 'result') return b.resultRate - a.resultRate
-    return props.scope === 'recommend' ? b.strength - a.strength : limitUpSortValue(b) - limitUpSortValue(a)
+    if (props.scope === 'recommend') {
+      return b.strength - a.strength
+        || limitUpSortValue(b) - limitUpSortValue(a)
+        || b.resultRate - a.resultRate
+    }
+    if (props.scope === 'limit') {
+      return limitUpSortValue(b) - limitUpSortValue(a)
+        || b.resultRate - a.resultRate
+    }
+    return limitUpSortValue(b) - limitUpSortValue(a)
+      || b.resultRate - a.resultRate
   })
 })
 
 function limitUpSortValue(stock: StockPoolItem) {
   return Math.abs(stock.consecutiveLimitUpDays ?? 0)
+}
+
+/** 根据日 K 状态返回涨停板型标签。 */
+function limitUpTypeLabel(stock: StockPoolItem) {
+  const labels: Record<number, string> = {
+    1: '实体板',
+    2: 'T字板',
+    3: '一字板',
+    4: '地天板',
+    5: '天地天板'
+  }
+  return stock.klineState != null ? labels[stock.klineState] ?? '' : ''
 }
 
 function weekdayLabel(dateText: string) {
@@ -153,19 +170,19 @@ onBeforeUnmount(() => {
         <span v-if="emotionSummary.leaderCode">龙头：<b>{{ emotionSummary.leaderName || emotionSummary.leaderCode }}</b></span>
       </div>
       <div class="stock-emotion-row">
-        <span>涨停 <b>{{ emotionSummary.limitUpCount }}</b></span>
-        <span>连板 <b>{{ emotionSummary.consecutiveLimitUpCount }}</b></span>
+        <span>涨停 <b class="emotion-rise">{{ emotionSummary.limitUpCount }}</b></span>
+        <span>连板 <b class="emotion-rise">{{ emotionSummary.consecutiveLimitUpCount }}</b></span>
       </div>
       <div class="stock-emotion-row">
-        <span>炸板 <b>{{ emotionSummary.explodeCount }}</b></span>
-        <span>跌停 <b>{{ emotionSummary.limitDownCount ?? 0 }}</b></span>
+        <span>炸板 <b class="emotion-fall">{{ emotionSummary.explodeCount }}</b></span>
+        <span>跌停 <b class="emotion-fall">{{ emotionSummary.limitDownCount ?? 0 }}</b></span>
       </div>
       <div class="stock-emotion-row compact">
         <span>连板率 <b>{{ emotionSummary.consecutiveRate.toFixed(2) }}%</b></span>
         <span>炸板率 <b>{{ emotionSummary.explodeRate.toFixed(2) }}%</b></span>
       </div>
       <div class="stock-emotion-highlight stock-emotion-market">
-        <span>涨 / 跌 <b>{{ emotionSummary.risingCount }} / {{ emotionSummary.fallingCount }}</b></span>
+        <span>涨 / 跌 <b><em class="emotion-rise">{{ emotionSummary.risingCount }}</em> / <em class="emotion-fall">{{ emotionSummary.fallingCount }}</em></b></span>
         <span>成交额 <b>{{ formatMarketTurnover(emotionSummary.allMarketTurnoverAmount) }}</b></span>
       </div>
     </div>
@@ -200,19 +217,6 @@ onBeforeUnmount(() => {
         >
       </label>
 
-      <label class="select-shell">
-        <ArrowDownAZ :size="16" />
-        <select
-          :value="sortMode"
-          aria-label="排序"
-          @change="emit('update:sortMode', ($event.target as HTMLSelectElement).value)"
-        >
-          <option value="limitUpDays">按连板次数排序</option>
-          <option v-if="scope === 'recommend'" value="strength">按涨停分排序</option>
-          <option value="amount">按成交额排序</option>
-          <option value="result">按回测结果排序</option>
-        </select>
-      </label>
     </div>
 
     <div class="stock-list">
@@ -229,13 +233,24 @@ onBeforeUnmount(() => {
           <small>{{ stock.code }}</small>
         </span>
         <span class="stock-side">
-          <b :class="stock.scope">{{ stock.boardLabel }}</b>
-          <small>
-            <template v-if="scope === 'recommend'">涨停分 {{ stock.strength }}</template>
-            <template v-if="stock.rz === 1"> · 融</template>
-            <template v-if="stock.zz === 1"> · 债</template>
-            <template v-if="stock.st === 1"> · ST</template>
-          </small>
+          <span class="stock-board-label">
+            <b :class="stock.scope">
+              {{ scope === 'recommend' ? `推荐 ${stock.boardLabel}` : ((stock.consecutiveLimitUpDays ?? 0) < 0 ? `${stock.boardLabel}断` : stock.boardLabel) }}
+            </b>
+          </span>
+          <span class="stock-meta">
+            <i v-if="limitUpTypeLabel(stock)" class="status-limit-type">{{ limitUpTypeLabel(stock) }}</i>
+            <span v-if="(scope === 'recommend' || scope === 'break') && (stock.klineState != null && stock.klineState >= 11 && stock.klineState <= 13 || (stock.consecutiveLimitUpDays ?? 0) < 0)" class="stock-status-tags">
+              <i v-if="stock.klineState != null && stock.klineState >= 11 && stock.klineState <= 13" class="status-break">炸板</i>
+              <i v-if="(stock.consecutiveLimitUpDays ?? 0) < 0" class="status-broken">断板</i>
+            </span>
+            <small>
+              <template v-if="scope === 'recommend'"><i class="score-tag">涨停分 {{ stock.strength }}</i></template>
+              <template v-if="stock.rz === 1"> · 融</template>
+              <template v-if="stock.zz === 1"> · 债</template>
+              <template v-if="stock.st === 1"> · ST</template>
+            </small>
+          </span>
         </span>
       </button>
     </div>

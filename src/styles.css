@@ -309,6 +309,79 @@ button {
   padding-left: 10px;
 }
 
+.stock-status-tags {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.stock-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 22px;
+  max-width: 100%;
+}
+
+.stock-board-label {
+  display: inline-flex;
+}
+
+.stock-status-tags i {
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.1;
+}
+
+.stock-meta > .status-limit-type {
+  padding: 2px 4px;
+  border: 1px solid rgba(192, 38, 211, 0.28);
+  border-radius: 4px;
+  color: #a21caf;
+  background: #fdf0ff;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.stock-status-tags .status-break {
+  color: #a45a1f;
+  background: #fff0e2;
+}
+
+.stock-status-tags .status-broken {
+  color: #2d6f9b;
+  background: #e8f3fb;
+}
+
+.stock-side small .score-tag {
+  padding: 2px 5px;
+  border: 1px solid rgba(217, 45, 32, 0.18);
+  border-radius: 4px;
+  color: var(--red);
+  background: rgba(254, 243, 242, 0.94);
+  font-size: 10px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.stock-emotion-highlight em {
+  font-style: normal;
+}
+
+.stock-emotion .emotion-rise {
+  color: #d84a4a;
+}
+
+.stock-emotion .emotion-fall {
+  color: #2d9b68;
+}
+
 .stock-emotion-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

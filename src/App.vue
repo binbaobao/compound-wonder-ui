@@ -13,7 +13,6 @@ const tradeDate = ref('')
 const detailDate = ref('')
 const scope = ref<StockScope>('limit')
 const keyword = ref('')
-const sortMode = ref('limitUpDays')
 const stocks = ref<StockPoolItem[]>([])
 const tradingDays = ref<EmotionCalendarDay[]>([])
 const selectedStock = ref<StockPoolItem | null>(null)
@@ -364,7 +363,6 @@ onBeforeUnmount(() => {
     <main class="workspace">
       <StockPool
         v-model:keyword="keyword"
-        v-model:sort-mode="sortMode"
         v-model:trade-date="tradeDate"
         v-model:scope="scope"
         :stocks="stocks"
