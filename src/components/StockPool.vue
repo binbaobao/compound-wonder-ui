@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { CalendarDays, Search } from 'lucide-vue-next'
+import { CalendarDays, RefreshCw, Search } from 'lucide-vue-next'
 import type { EmotionCalendarDay, EmotionCycleSummary, StockPoolItem, StockScope } from '../types/market'
 
 const props = defineProps<{
@@ -11,12 +11,14 @@ const props = defineProps<{
   tradeDate: string
   tradingDays: EmotionCalendarDay[]
   emotionSummary?: EmotionCycleSummary | null
+  reselecting?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:keyword': [value: string]
   'update:tradeDate': [value: string]
   'update:scope': [value: StockScope]
+  reselect: []
   select: [stock: StockPoolItem]
 }>()
 
@@ -51,21 +53,29 @@ const filteredStocks = computed(() => {
 
   return [...rows].sort((a, b) => {
     if (props.scope === 'recommend') {
-      return b.strength - a.strength
-        || limitUpSortValue(b) - limitUpSortValue(a)
-        || b.resultRate - a.resultRate
+      return limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope)
+        || compareDesc(a.strength, b.strength)
+        || compareDesc(a.resultRate, b.resultRate)
     }
     if (props.scope === 'limit') {
-      return limitUpSortValue(b) - limitUpSortValue(a)
-        || b.resultRate - a.resultRate
+      return limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope)
+        || compareDesc(a.resultRate, b.resultRate)
     }
-    return limitUpSortValue(b) - limitUpSortValue(a)
-      || b.resultRate - a.resultRate
+    return limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope)
+      || compareDesc(a.resultRate, b.resultRate)
   })
 })
 
-function limitUpSortValue(stock: StockPoolItem) {
-  return Math.abs(stock.consecutiveLimitUpDays ?? 0)
+function limitUpSortValue(stock: StockPoolItem, scope: StockScope) {
+  const days = scope === 'recommend'
+    ? stock.lbc ?? stock.consecutiveLimitUpDays
+    : stock.consecutiveLimitUpDays
+  return Math.abs(Number(days ?? 0))
+}
+
+/** 按数值倒序比较，兼容接口返回字符串或空值。 */
+function compareDesc(left: number | string | null | undefined, right: number | string | null | undefined) {
+  return Number(right ?? 0) - Number(left ?? 0)
 }
 
 /** 根据日 K 状态返回涨停板型标签。 */
@@ -202,7 +212,13 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="panel-head">
-      <span>{{ title }}</span>
+      <div class="stock-title-group">
+        <button v-if="scope === 'recommend'" class="reselect-button" type="button" :disabled="reselecting" @click="emit('reselect')">
+          <RefreshCw :size="13" :class="{ spinning: reselecting }" />
+          <span>{{ reselecting ? '选股中' : '重新选股' }}</span>
+        </button>
+        <span>{{ title }}</span>
+      </div>
       <small>{{ filteredStocks.length }} 只</small>
     </div>
 

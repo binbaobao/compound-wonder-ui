@@ -4,8 +4,9 @@ import { CalendarDays } from 'lucide-vue-next'
 import AShareMinuteChart from './components/AShareMinuteChart.vue'
 import BacktestPanel from './components/BacktestPanel.vue'
 import KLineChartBox from './components/KLineChartBox.vue'
+import HistoricalBacktestPanel from './components/HistoricalBacktestPanel.vue'
 import StockPool from './components/StockPool.vue'
-import { fetchDailyBars, fetchEmotionSummary, fetchMinuteBars, fetchStockPool, fetchTradingDays } from './api/market'
+import { fetchDailyBars, fetchEmotionSummary, fetchMinuteBars, fetchStockPool, fetchTradingDays, runStockSelectionBacktest } from './api/market'
 import type { ChartBar } from './types/market'
 import type { BacktestSummary, EmotionCalendarDay, EmotionCycleSummary, MinuteTick, RuleRecord, StockPoolItem, StockScope, TradeEvent } from './types/market'
 
@@ -23,6 +24,7 @@ const events = ref<TradeEvent[]>([])
 const backtestRecords = ref<RuleRecord[]>([])
 const emotionSummary = ref<EmotionCycleSummary | null>(null)
 const loading = ref(false)
+const reselecting = ref(false)
 const apiMessage = ref('等待后端数据')
 const errorMessage = ref('')
 const detailDateOpen = ref(false)
@@ -253,6 +255,25 @@ async function loadStockPool() {
   }
 }
 
+async function reselectStocks() {
+  if (!tradeDate.value || reselecting.value) return
+  const currentIndex = tradingDays.value.findIndex(day => day.date === tradeDate.value)
+  const selectionDate = currentIndex > 0
+    ? tradingDays.value[currentIndex - 1].date
+    : tradeDate.value
+  reselecting.value = true
+  errorMessage.value = ''
+  try {
+    await runStockSelectionBacktest(selectionDate)
+    await loadStockPool()
+    apiMessage.value = `重新选股完成：${selectionDate}`
+  } catch (error) {
+    errorMessage.value = '重新选股接口调用失败'
+  } finally {
+    reselecting.value = false
+  }
+}
+
 async function loadEmotionSummary() {
   if (!tradeDate.value) {
     emotionSummary.value = null
@@ -369,24 +390,26 @@ onBeforeUnmount(() => {
         :selected-code="selectedCode"
         :trading-days="tradingDays"
         :emotion-summary="emotionSummary"
+        :reselecting="reselecting"
         @select="selectStock"
+        @reselect="reselectStocks"
       />
 
-      <section v-if="selectedStock" class="center-panel">
+      <section class="center-panel">
         <AShareMinuteChart
           title="Level2 分时"
           legend="集合竞价 / 连续竞价 / 收盘竞价"
           :ticks="minuteTicks"
           :events="backtestTradeEvents"
           :previous-close="previousClose"
-          :stock-code="selectedStock.code"
+          :stock-code="selectedStock?.code ?? ''"
           :trade-date="detailDate"
-          :is-st="selectedStock.st === 1 || selectedStock.historySt === 1"
+          :is-st="selectedStock?.st === 1 || selectedStock?.historySt === 1"
           :float-shares="selectedDailyBar?.floatShares ?? 0"
           :height="430"
-          empty-text="暂无分时数据"
+          :empty-text="selectedStock ? '暂无分时数据' : '请选择左侧股票'"
         >
-          <template #head>
+          <template v-if="selectedStock" #head>
             <div class="quote-main minute-quote-main">
               <div ref="detailDatePicker" class="date-picker quote-date-picker">
                 <button class="date-control light date-trigger quote-date-trigger" type="button" @click="toggleDetailDateMenu">
@@ -473,16 +496,11 @@ onBeforeUnmount(() => {
           :bars="dailyBars"
           :height="510"
           :marker-timestamp="selectedDailyBar?.timestamp"
-          empty-text="数据库暂无日 K 数据"
+          :empty-text="selectedStock ? '数据库暂无日 K 数据' : '请选择左侧股票'"
           show-volume
         />
-      </section>
 
-      <section v-else class="center-panel empty-workspace">
-        <div class="empty-state">
-          <strong>{{ loading ? '正在加载数据库数据' : '暂无可展示股票' }}</strong>
-          <span>{{ visibleStatus }}</span>
-        </div>
+        <HistoricalBacktestPanel :default-end-date="detailDate || tradeDate" />
       </section>
 
       <BacktestPanel

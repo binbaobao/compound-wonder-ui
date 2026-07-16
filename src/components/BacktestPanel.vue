@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { fetchHistoricalBacktest } from '../api/market'
+import { fetchOrderBookReplay } from '../api/market'
 import type { BacktestSummary, RuleRecord, StockPoolItem, TradeEvent } from '../types/market'
 
 const props = defineProps<{
@@ -34,7 +34,7 @@ async function runBacktest(direction: 1 | 2) {
   errorMessage.value = ''
   expandedRemarkKeys.value = new Set()
   try {
-    records.value = await fetchHistoricalBacktest(props.stock.code, props.tradeDate, direction)
+    records.value = await fetchOrderBookReplay(props.stock.code, props.tradeDate, direction)
     emit('records-change', records.value)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '回测接口执行失败'

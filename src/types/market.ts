@@ -128,3 +128,60 @@ export interface EmotionCycleSummary {
   leaderCode?: string
   leaderName?: string
 }
+
+export interface HistoricalBacktestRun {
+  id: number
+  startDate: string
+  endDate: string
+  initialCapital: number
+  status: 0 | 1 | 2 | 3
+  lastCompletedDate?: string
+  finalAsset?: number
+  totalReturnRate?: number
+  limitUpBreakCount?: number
+  errorMessage?: string
+  startedTime?: string
+  finishedTime?: string
+}
+
+export interface HistoricalBacktestDailyRecord {
+  id: number
+  tradeDate: string
+  accountStatus: 0 | 1
+  symbol?: string
+  symbolName?: string
+  totalAsset: number
+  dailyReturnRate: number
+  cumulativeReturnRate: number
+}
+
+export interface HistoricalBacktestPosition {
+  id: number
+  symbol: string
+  symbolName?: string
+  tradeMode?: number
+  limitUpScore?: number
+  buyDate: string
+  buyPrice: number
+  sellDate?: string
+  sellPrice?: number
+  holdingTradeDays: number
+  returnRate?: number
+  maxFloatingReturnRate: number
+  maxDrawdownRate: number
+  status: 1 | 2
+}
+
+export interface HistoricalBacktestRule {
+  id: number
+  actionType: 1 | 2 | 3
+  ruleCode: number
+  symbol: string
+  symbolName?: string
+  tradeDate: string
+  time: number
+  quantity?: number
+  tradeAmount?: number
+  price: number
+  remark?: string
+}

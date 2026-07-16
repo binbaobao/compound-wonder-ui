@@ -1,4 +1,4 @@
-import type { ChartBar, EmotionCalendarDay, EmotionCycleSummary, MinuteTick, RuleRecord, StockPoolItem, StockScope } from '../types/market'
+import type { ChartBar, EmotionCalendarDay, EmotionCycleSummary, HistoricalBacktestDailyRecord, HistoricalBacktestPosition, HistoricalBacktestRule, HistoricalBacktestRun, MinuteTick, RuleRecord, StockPoolItem, StockScope } from '../types/market'
 
 interface ApiResult<T> {
   code: number
@@ -8,8 +8,8 @@ interface ApiResult<T> {
 
 const API_BASE = '/cw/backtest'
 
-async function request<T>(url: string): Promise<T> {
-  const response = await fetch(url)
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init)
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`)
   }
@@ -27,6 +27,11 @@ export function fetchTradingDays(): Promise<EmotionCalendarDay[]> {
 export function fetchStockPool(date: string, scope: StockScope, limit = 200): Promise<StockPoolItem[]> {
   const params = new URLSearchParams({ date, scope, limit: String(limit) })
   return request<StockPoolItem[]>(`${API_BASE}/stocks?${params}`)
+}
+
+export function runStockSelectionBacktest(date: string): Promise<string> {
+  const params = new URLSearchParams({ date })
+  return request<string>(`${API_BASE}/stock-selection-backtest?${params}`)
 }
 
 export function fetchDailyBars(stockCode: string, date: string, beforeLimit = 300, afterLimit = 100): Promise<ChartBar[]> {
@@ -49,7 +54,32 @@ export function fetchEmotionSummary(date: string): Promise<EmotionCycleSummary> 
   return request<EmotionCycleSummary>(`${API_BASE}/emotion-summary?${params}`)
 }
 
-export function fetchHistoricalBacktest(stockCode: string, date: string, direction: 1 | 2): Promise<RuleRecord[]> {
+export function fetchOrderBookReplay(stockCode: string, date: string, direction: 1 | 2): Promise<RuleRecord[]> {
   const params = new URLSearchParams({ stockCode, date, direction: String(direction) })
-  return request<RuleRecord[]>(`${API_BASE}/historical/backtest?${params}`)
+  return request<RuleRecord[]>(`${API_BASE}/order-book/replay?${params}`)
+}
+
+export function startHistoricalBacktest(startDate: string, endDate: string): Promise<HistoricalBacktestRun> {
+  const params = new URLSearchParams({ startDate, endDate })
+  return request<HistoricalBacktestRun>(`${API_BASE}/trade-runs?${params}`, { method: 'POST' })
+}
+
+export function fetchHistoricalBacktestRun(runId: number): Promise<HistoricalBacktestRun> {
+  return request<HistoricalBacktestRun>(`${API_BASE}/trade-runs/${runId}`)
+}
+
+export function fetchHistoricalBacktestRuns(limit = 20): Promise<HistoricalBacktestRun[]> {
+  return request<HistoricalBacktestRun[]>(`${API_BASE}/trade-runs?limit=${limit}`)
+}
+
+export function fetchHistoricalBacktestDailyRecords(runId: number): Promise<HistoricalBacktestDailyRecord[]> {
+  return request<HistoricalBacktestDailyRecord[]>(`${API_BASE}/trade-runs/${runId}/daily-records`)
+}
+
+export function fetchHistoricalBacktestPositions(runId: number): Promise<HistoricalBacktestPosition[]> {
+  return request<HistoricalBacktestPosition[]>(`${API_BASE}/trade-runs/${runId}/positions`)
+}
+
+export function fetchHistoricalBacktestRules(runId: number): Promise<HistoricalBacktestRule[]> {
+  return request<HistoricalBacktestRule[]>(`${API_BASE}/trade-runs/${runId}/rules`)
 }
