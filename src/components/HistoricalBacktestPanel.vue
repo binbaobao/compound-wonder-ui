@@ -12,6 +12,7 @@ import {
 import type { HistoricalBacktestDailyRecord, HistoricalBacktestPosition, HistoricalBacktestRule, HistoricalBacktestRun } from '../types/market'
 
 const props = defineProps<{ defaultEndDate: string }>()
+const emit = defineEmits<{ selectPosition: [position: HistoricalBacktestPosition] }>()
 
 const startDate = ref('')
 const endDate = ref('')
@@ -320,7 +321,13 @@ onMounted(loadRuns)
           <div v-if="positions.length" class="historical-list">
             <article v-for="position in positions" :key="position.id" class="historical-position">
               <strong class="historical-position-title">
-                <span class="position-stock-name">{{ position.symbolName || position.symbol }}</span>
+                <button
+                  class="position-stock-name"
+                  type="button"
+                  @click="emit('selectPosition', position)"
+                >
+                  {{ position.symbolName || position.symbol }}
+                </button>
                 <small>{{ position.symbol }}</small>
                 <i v-if="position.id === maxProfitPositionId" class="position-max-gain">MAX赚</i>
                 <i v-if="position.id === maxLossPositionId" class="position-max-loss">MAX亏</i>

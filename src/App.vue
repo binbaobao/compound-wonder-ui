@@ -8,7 +8,7 @@ import HistoricalBacktestPanel from './components/HistoricalBacktestPanel.vue'
 import StockPool from './components/StockPool.vue'
 import { fetchDailyBars, fetchEmotionSummary, fetchMinuteBars, fetchStockPool, fetchTradingDays, runStockSelectionBacktest } from './api/market'
 import type { ChartBar } from './types/market'
-import type { BacktestSummary, EmotionCalendarDay, EmotionCycleSummary, MinuteTick, RuleRecord, StockPoolItem, StockScope, TradeEvent } from './types/market'
+import type { BacktestSummary, EmotionCalendarDay, EmotionCycleSummary, HistoricalBacktestPosition, MinuteTick, RuleRecord, StockPoolItem, StockScope, TradeEvent } from './types/market'
 
 const tradeDate = ref('')
 const detailDate = ref('')
@@ -136,6 +136,24 @@ function selectStock(stock: StockPoolItem) {
   }
   backtestRecords.value = []
   selectedStock.value = stock
+}
+
+/** 从历史持仓跳转到该股票的买入日分时与日 K 图。 */
+function selectHistoricalPosition(position: HistoricalBacktestPosition) {
+  const poolStock = stocks.value.find(stock => stock.code === position.symbol)
+  selectedStock.value = poolStock ?? normalizeStock({
+    code: position.symbol,
+    symbolId: 0,
+    name: position.symbolName || position.symbol,
+    boardLabel: '',
+    theme: '',
+    strength: 0,
+    amount: '0',
+    price: 0,
+    resultRate: 0,
+    scope: scope.value
+  })
+  detailDate.value = position.buyDate
 }
 
 function rateClass(value: number) {
@@ -500,7 +518,10 @@ onBeforeUnmount(() => {
           show-volume
         />
 
-        <HistoricalBacktestPanel :default-end-date="detailDate || tradeDate" />
+        <HistoricalBacktestPanel
+          :default-end-date="detailDate || tradeDate"
+          @select-position="selectHistoricalPosition"
+        />
       </section>
 
       <BacktestPanel

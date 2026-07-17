@@ -848,7 +848,21 @@ button {
 .historical-position strong, .historical-rule strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .historical-position > strong { grid-column: 1 / -1; }
 .historical-position-title { display: flex; align-items: center; gap: 5px; overflow: hidden; }
-.position-stock-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.position-stock-name {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.position-stock-name:hover { color: #2563eb; text-decoration: underline; }
+.position-stock-name:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
 .historical-position-title > small { flex: 0 0 auto; color: var(--muted); font-weight: 400; }
 .historical-position-title i { flex: 0 0 auto; padding: 1px 4px; border-radius: 4px; font-size: 10px; font-style: normal; line-height: 1.2; }
 .position-max-gain { color: var(--red); background: #fff1f0; }
