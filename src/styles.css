@@ -806,8 +806,11 @@ button {
 .historical-start:disabled, .historical-refresh:disabled { opacity: .58; cursor: wait; }
 
 .historical-status {
-  grid-template-columns: repeat(4, max-content);
+  display: flex;
   align-items: center;
+  gap: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 11px;
 }
@@ -876,6 +879,7 @@ button {
 .rule-buy { color: var(--red); }
 .rule-sell { color: #2563eb; }
 .rule-cancel { color: #667085; }
+.rule-unfilled { flex: 0 0 auto; padding: 1px 4px; border-radius: 4px; color: #2563eb; background: #eff6ff; font-size: 10px; font-style: normal; line-height: 1.2; }
 .historical-position > small, .historical-rule > small { grid-column: 1 / -1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 .historical-empty { margin: 0; padding: 12px 0; color: var(--muted); text-align: center; font-size: 12px; }
 

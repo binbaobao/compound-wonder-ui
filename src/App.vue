@@ -17,6 +17,7 @@ const keyword = ref('')
 const stocks = ref<StockPoolItem[]>([])
 const tradingDays = ref<EmotionCalendarDay[]>([])
 const selectedStock = ref<StockPoolItem | null>(null)
+const pendingHistoricalStock = ref<StockPoolItem | null>(null)
 const dailyBars = ref<ChartBar[]>([])
 const minuteBars = ref<ChartBar[]>([])
 const minuteTicks = ref<MinuteTick[]>([])
@@ -140,8 +141,7 @@ function selectStock(stock: StockPoolItem) {
 
 /** 从历史持仓跳转到该股票的买入日分时与日 K 图。 */
 function selectHistoricalPosition(position: HistoricalBacktestPosition) {
-  const poolStock = stocks.value.find(stock => stock.code === position.symbol)
-  selectedStock.value = poolStock ?? normalizeStock({
+  const historicalStock = normalizeStock({
     code: position.symbol,
     symbolId: 0,
     name: position.symbolName || position.symbol,
@@ -153,7 +153,12 @@ function selectHistoricalPosition(position: HistoricalBacktestPosition) {
     resultRate: 0,
     scope: scope.value
   })
+  selectedStock.value = historicalStock
   detailDate.value = position.buyDate
+  if (tradeDate.value !== position.buyDate) {
+    pendingHistoricalStock.value = historicalStock
+    tradeDate.value = position.buyDate
+  }
 }
 
 function rateClass(value: number) {
@@ -257,16 +262,25 @@ async function loadTradingDays() {
 
 async function loadStockPool() {
   if (!tradeDate.value) return
+  const requestedDate = tradeDate.value
+  const requestedScope = scope.value
   loading.value = true
   errorMessage.value = ''
   try {
-    const rows = await fetchStockPool(tradeDate.value, scope.value, 300)
+    const rows = await fetchStockPool(requestedDate, requestedScope, 300)
+    if (tradeDate.value !== requestedDate || scope.value !== requestedScope) return
     stocks.value = rows.map(normalizeStock)
-    selectedStock.value = stocks.value[0] ?? null
-    apiMessage.value = rows.length ? `数据库数据：${tradeDate.value}` : `数据库无${scopeName.value}股票`
+    const historicalStock = pendingHistoricalStock.value
+    selectedStock.value = historicalStock
+      ? stocks.value.find(stock => stock.code === historicalStock.code) ?? historicalStock
+      : stocks.value[0] ?? null
+    pendingHistoricalStock.value = null
+    apiMessage.value = rows.length ? `数据库数据：${requestedDate}` : `数据库无${scopeName.value}股票`
   } catch (error) {
+    if (tradeDate.value !== requestedDate || scope.value !== requestedScope) return
     stocks.value = []
     selectedStock.value = null
+    pendingHistoricalStock.value = null
     errorMessage.value = `后端接口加载失败`
   } finally {
     loading.value = false

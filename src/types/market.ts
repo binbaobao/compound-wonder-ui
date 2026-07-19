@@ -180,6 +180,7 @@ export interface HistoricalBacktestRule {
   symbolName?: string
   tradeDate: string
   time: number
+  lastOrderTime?: number
   quantity?: number
   tradeAmount?: number
   price: number

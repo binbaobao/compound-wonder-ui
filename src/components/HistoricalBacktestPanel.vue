@@ -26,6 +26,8 @@ const submitting = ref(false)
 const loadingResults = ref(false)
 const equityOpen = ref(false)
 const errorMessage = ref('')
+const macNotificationRunId = ref<number | null>(null)
+let macCompletionAudioContext: AudioContext | undefined
 let pollTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(() => props.defaultEndDate, date => {
@@ -43,6 +45,7 @@ const statusLabel = computed(() => {
   if (!run.value) return '未启动'
   return ({ 0: '待执行', 1: '回测进行中', 2: '已完成', 3: '执行失败' } as Record<number, string>)[run.value.status] ?? '未知状态'
 })
+const runDuration = computed(() => formatRunDuration(run.value?.startedTime, run.value?.finishedTime))
 const equityChart = computed(() => {
   const records = dailyRecords.value
   const values = records.map(record => Number(record.cumulativeReturnRate ?? 0)).filter(value => Number.isFinite(value))
@@ -104,6 +107,9 @@ async function startRun() {
     errorMessage.value = '开始日期不能晚于结束日期'
     return
   }
+  macNotificationRunId.value = null
+  prepareMacCompletionSound()
+  await requestMacNotificationPermission()
   submitting.value = true
   errorMessage.value = ''
   dailyRecords.value = []
@@ -112,6 +118,7 @@ async function startRun() {
   try {
     run.value = await startHistoricalBacktest(startDate.value, endDate.value)
     selectedRunId.value = run.value.id
+    macNotificationRunId.value = run.value.id
     await loadRuns()
     schedulePoll()
   } catch (error) {
@@ -166,9 +173,14 @@ async function refreshRun() {
     run.value = await fetchHistoricalBacktestRun(run.value.id)
     if (run.value.status === 2) {
       await loadResults(run.value.id)
+      notifyMacBacktestCompletion(run.value)
       return
     }
-    if (run.value.status !== 3) schedulePoll()
+    if (run.value.status !== 3) {
+      schedulePoll()
+    } else if (macNotificationRunId.value === run.value.id) {
+      macNotificationRunId.value = null
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '回测状态查询失败'
   }
@@ -199,6 +211,95 @@ function formatMoney(value?: number) {
 
 function formatRate(value?: number) {
   return `${(Number(value ?? 0) * 100).toFixed(2)}%`
+}
+
+/** 判断当前浏览器是否运行在 macOS 桌面系统。 */
+function isMacOS() {
+  return navigator.userAgent.includes('Macintosh')
+}
+
+/** 在启动回测的用户操作中预热音频，避免任务完成时被浏览器自动播放策略拦截。 */
+function prepareMacCompletionSound() {
+  if (!isMacOS() || !('AudioContext' in window)) return
+  macCompletionAudioContext ??= new AudioContext()
+  void macCompletionAudioContext.resume().catch(() => {
+    // 音频被浏览器策略拦截时，系统横幅通知仍会正常发送。
+  })
+}
+
+/** 回测完成后主动播放两声短提示，补足 macOS 系统通知可能静音的情况。 */
+function playMacCompletionSound() {
+  const context = macCompletionAudioContext
+  if (!isMacOS() || !context || context.state !== 'running') return
+
+  const now = context.currentTime
+  const oscillator = context.createOscillator()
+  const gain = context.createGain()
+  oscillator.type = 'sine'
+  oscillator.frequency.setValueAtTime(880, now)
+  oscillator.frequency.setValueAtTime(1_176, now + 0.2)
+  gain.gain.setValueAtTime(0.0001, now)
+  gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01)
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14)
+  gain.gain.exponentialRampToValueAtTime(0.12, now + 0.21)
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35)
+  oscillator.connect(gain).connect(context.destination)
+  oscillator.start(now)
+  oscillator.stop(now + 0.36)
+}
+
+/** 在用户启动回测时请求 macOS 系统通知权限，不阻塞回测任务。 */
+async function requestMacNotificationPermission() {
+  if (!isMacOS() || !('Notification' in window) || Notification.permission !== 'default') return
+  try {
+    await Notification.requestPermission()
+  } catch {
+    // 通知权限被浏览器策略拦截时，回测仍照常执行。
+  }
+}
+
+/** 对当前页面启动且已完成的回测任务发送 macOS 系统通知。 */
+function notifyMacBacktestCompletion(completedRun: HistoricalBacktestRun) {
+  if (!isMacOS() || macNotificationRunId.value !== completedRun.id) return
+  macNotificationRunId.value = null
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+
+  const duration = formatRunDuration(completedRun.startedTime, completedRun.finishedTime)
+  const body = [
+    `${completedRun.startDate} 至 ${completedRun.endDate}`,
+    `累计收益 ${formatRate(completedRun.totalReturnRate)} · 最终资产 ${formatMoney(completedRun.finalAsset)}`,
+    duration ? `耗时 ${duration}` : ''
+  ].filter(Boolean).join('\n')
+  new Notification('擒龙捉妖 · 回测完成', {
+    body,
+    tag: `historical-backtest-${completedRun.id}`,
+    silent: false
+  })
+  playMacCompletionSound()
+}
+
+/** 将后端 ISO 本地时间显示为空格分隔格式。 */
+function formatRunDateTime(value?: string) {
+  return value?.replace('T', ' ') ?? ''
+}
+
+/** 使用任务开始、结束时间计算完整回测耗时。 */
+function formatRunDuration(startedTime?: string, finishedTime?: string) {
+  if (!startedTime || !finishedTime) return ''
+  const elapsedMilliseconds = new Date(finishedTime).getTime() - new Date(startedTime).getTime()
+  if (!Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0) return ''
+
+  const totalSeconds = Math.floor(elapsedMilliseconds / 1000)
+  const days = Math.floor(totalSeconds / 86_400)
+  const hours = Math.floor(totalSeconds % 86_400 / 3_600)
+  const minutes = Math.floor(totalSeconds % 3_600 / 60)
+  const seconds = totalSeconds % 60
+  const parts: string[] = []
+  if (days) parts.push(`${days}天`)
+  if (hours || days) parts.push(`${hours}小时`)
+  if (minutes || hours || days) parts.push(`${minutes}分`)
+  parts.push(`${seconds}秒`)
+  return parts.join('')
 }
 
 /** 持仓收益按 A 股习惯显示：不亏红色加号，亏损绿色减号。 */
@@ -268,6 +369,24 @@ function actionClass(actionType: number) {
   return ({ 1: 'rule-buy', 2: 'rule-sell', 3: 'rule-cancel' } as Record<number, string>)[actionType] ?? 'rule-cancel'
 }
 
+/** 将 HHmmssSSS 格式的盘中时间转换为当日毫秒数，用于跨秒的成交延迟比较。 */
+function compactTimeToMillis(value: number) {
+  const text = String(value).padStart(9, '0')
+  const hour = Number(text.slice(0, 2))
+  const minute = Number(text.slice(2, 4))
+  const second = Number(text.slice(4, 6))
+  const millisecond = Number(text.slice(6, 9))
+  return ((hour * 60 + minute) * 60 + second) * 1000 + millisecond
+}
+
+/** 判断盘中买单是否未达到沪深市场要求的最小成交延迟。 */
+function isUnfilledBuy(rule: HistoricalBacktestRule) {
+  if (rule.actionType !== 1) return false
+  if (rule.lastOrderTime == null || rule.lastOrderTime === 0) return true
+  const delayMillis = rule.symbol.startsWith('6') ? 500 : 100
+  return compactTimeToMillis(rule.lastOrderTime) - compactTimeToMillis(rule.time) <= delayMillis
+}
+
 onBeforeUnmount(() => {
   if (pollTimer) clearTimeout(pollTimer)
 })
@@ -308,8 +427,10 @@ onMounted(loadRuns)
     <div v-if="run" class="historical-status" :class="`status-${run.status}`">
       <span><b>{{ statusLabel }}</b></span>
       <span>{{ run.startDate }} 至 {{ run.endDate }}</span>
-      <span v-if="run.lastCompletedDate">已处理到 {{ run.lastCompletedDate }}</span>
-      <span v-if="run.finishedTime">结束于 {{ run.finishedTime }}</span>
+      <span v-if="run.lastCompletedDate && run.status !== 2">已处理到 {{ run.lastCompletedDate }}</span>
+      <span v-if="run.startedTime">开始于 {{ formatRunDateTime(run.startedTime) }}</span>
+      <span v-if="run.finishedTime">结束于 {{ formatRunDateTime(run.finishedTime) }}</span>
+      <span v-if="runDuration">回测用时 {{ runDuration }}</span>
       <span v-if="run.errorMessage" class="historical-error">{{ run.errorMessage }}</span>
     </div>
     <p v-if="errorMessage" class="historical-error historical-message">{{ errorMessage }}</p>
@@ -349,6 +470,7 @@ onMounted(loadRuns)
                 <strong :class="actionClass(rule.actionType)">{{ actionLabel(rule.actionType) }}</strong>
                 <b>{{ rule.symbolName || rule.symbol }}</b>
                 <em>规则 {{ rule.ruleCode }} · {{ formatTime(rule.time) }}</em>
+                <i v-if="isUnfilledBuy(rule)" class="rule-unfilled">未成交</i>
               </div>
               <small>{{ rule.tradeDate }}<template v-if="rule.remark"> · {{ rule.remark }}</template></small>
             </article>
