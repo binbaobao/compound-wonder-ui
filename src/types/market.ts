@@ -28,6 +28,7 @@ export interface StockPoolItem {
   klineState?: number
   consecutiveLimitUpDays?: number
   lbc?: number
+  tradeMode?: 1 | 2 | 3
   zz?: number
   rz?: number
   st?: number
@@ -56,6 +57,10 @@ export interface ChartBar {
   totalShares?: number
   klineState?: number
   consecutiveLimitUpDays?: number
+  st?: number
+  historySt?: number
+  priceLimitRate?: number | null
+  noPriceLimit?: boolean
 }
 
 export interface MinuteTick {
@@ -86,13 +91,6 @@ export interface TradeEvent {
   actionType?: number
 }
 
-export interface BacktestSummary {
-  buyCount: number
-  sellCount: number
-  maxProfitRate: number
-  closeProfitRate: number
-}
-
 export interface RuleRecord {
   actionType?: number
   ruleCode?: number
@@ -102,13 +100,6 @@ export interface RuleRecord {
   price?: number
   increase?: number
   remark?: string
-}
-
-export interface StockBacktestPayload {
-  minuteBars: ChartBar[]
-  dailyBars: ChartBar[]
-  events: TradeEvent[]
-  summary: BacktestSummary
 }
 
 export interface EmotionCycleSummary {
@@ -159,6 +150,8 @@ export interface HistoricalBacktestPosition {
   id: number
   symbol: string
   symbolName?: string
+  st?: number
+  historySt?: number
   tradeMode?: number
   limitUpScore?: number
   buyDate: string
@@ -178,6 +171,8 @@ export interface HistoricalBacktestRule {
   ruleCode: number
   symbol: string
   symbolName?: string
+  st?: number
+  historySt?: number
   tradeDate: string
   time: number
   lastOrderTime?: number
@@ -185,4 +180,112 @@ export interface HistoricalBacktestRule {
   tradeAmount?: number
   price: number
   remark?: string
+}
+
+export type SingleModeTradeMode = 1 | 2 | 3
+
+export interface SingleModeBacktestRun {
+  id: number
+  sourceRunId?: number
+  strategyVersion?: string
+  startDate: string
+  endDate: string
+  tradeMode: SingleModeTradeMode
+  status: 1 | 2 | 3
+  lastCompletedDate?: string
+  totalSamples: number
+  processedSamples: number
+  boughtSamples: number
+  closedSamples: number
+  errorMessage?: string
+  startedTime?: string
+  finishedTime?: string
+}
+
+export interface SingleModeBacktestSample {
+  id: number
+  sourceSampleId?: number
+  symbol: string
+  symbolName?: string
+  st?: number
+  historySt?: number
+  tradeMode: SingleModeTradeMode
+  limitUpScore?: number
+  recommendDate: string
+  tradeDate: string
+  selectionBoard: number
+  selectionTrigger?: string
+  selectionStrength?: string
+  strategyVersion?: string
+  selectionRunId?: number
+  relayCandidateRecordId?: number
+  status: 1 | 2 | 3 | 4 | 5
+  positionType: 0 | 1 | 2
+  noBuyReason?: string
+  buyDate?: string
+  buyTime?: number
+  buyPrice?: number
+  buyRuleCode?: number
+  buyRemark?: string
+  buyDayKlineState?: number
+  sellDate?: string
+  sellTime?: number
+  sellPrice?: number
+  sellRuleCode?: number
+  sellRemark?: string
+  sellBoard?: number
+  holdingTradeDays: number
+  returnRate?: number
+  maxFloatingReturnRate?: number
+  maxDrawdownRate?: number
+  maxSealedBoards: number
+  maxTouchedBoards: number
+  potentialMaxReturnRate?: number
+  postSellMaxReturnRate?: number
+  sampleEndDate?: string
+}
+
+export interface SingleModeBacktestSummary {
+  totalSamples: number
+  processedSamples: number
+  boughtSamples: number
+  closedSamples: number
+  openSamples: number
+  noBuySamples: number
+  errorSamples: number
+  winSamples: number
+  buyRate: number
+  closeWinRate: number
+  averageReturnRate: number
+  averagePotentialMaxReturnRate: number
+  nextBoardTouchRate: number
+  nextBoardSealRate: number
+  nextBoardBreakRate: number
+  virtualSamples: number
+  virtualClosedSamples: number
+  virtualWinSamples: number
+  virtualCloseWinRate: number
+  virtualAverageReturnRate: number
+  scenarioCloseWinRate: number
+  scenarioAverageReturnRate: number
+  actualEntrySealRate: number
+  virtualEntrySealRate: number
+}
+
+export interface SingleModeBoardStat {
+  fromBoard: number
+  eligibleCount: number
+  touchCount: number
+  sealedCount: number
+  breakCount: number
+  touchRate: number
+  sealRate: number
+  breakRate: number
+}
+
+export interface SingleModeSamplePage {
+  total: number
+  page: number
+  pageSize: number
+  records: SingleModeBacktestSample[]
 }

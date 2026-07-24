@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { fetchOrderBookReplay } from '../api/market'
-import type { BacktestSummary, RuleRecord, StockPoolItem, TradeEvent } from '../types/market'
+import type { HistoricalBacktestRule, RuleRecord, StockPoolItem } from '../types/market'
+import { isAbortError, RequestGate } from '../utils/requestGate'
+import HistoricalExecutionRules from './HistoricalExecutionRules.vue'
 
 const props = defineProps<{
   stock: StockPoolItem
   tradeDate: string
-  summary: BacktestSummary
-  events: TradeEvent[]
+  historicalRules: HistoricalBacktestRule[]
 }>()
 
 const emit = defineEmits<{
@@ -19,6 +20,7 @@ const records = ref<RuleRecord[]>([])
 const errorMessage = ref('')
 const expandedRemarkKeys = ref<Set<string>>(new Set())
 const lastDirection = ref<1 | 2 | null>(null)
+const replayGate = new RequestGate()
 const emptyMessage = computed(() => {
   if (lastDirection.value === 1) return '无买入操作'
   if (lastDirection.value === 2) return '无卖出操作'
@@ -27,6 +29,9 @@ const emptyMessage = computed(() => {
 
 async function runBacktest(direction: 1 | 2) {
   if (!props.stock.code || !props.tradeDate || running.value) return
+  const stockCode = props.stock.code
+  const tradeDate = props.tradeDate
+  const request = replayGate.begin()
   running.value = true
   lastDirection.value = direction
   records.value = []
@@ -34,23 +39,33 @@ async function runBacktest(direction: 1 | 2) {
   errorMessage.value = ''
   expandedRemarkKeys.value = new Set()
   try {
-    records.value = await fetchOrderBookReplay(props.stock.code, props.tradeDate, direction)
-    emit('records-change', records.value)
+    const nextRecords = await fetchOrderBookReplay(stockCode, tradeDate, direction, request.signal)
+    if (!replayGate.isCurrent(request.id) || props.stock.code !== stockCode || props.tradeDate !== tradeDate) return
+    records.value = nextRecords
+    emit('records-change', nextRecords)
   } catch (error) {
+    if (isAbortError(error) || !replayGate.isCurrent(request.id)) return
     errorMessage.value = error instanceof Error ? error.message : '回测接口执行失败'
     emit('records-change', [])
   } finally {
-    running.value = false
+    if (replayGate.isCurrent(request.id)) running.value = false
   }
 }
 
-watch(() => [props.stock.code, props.tradeDate], () => {
-  records.value = []
-  lastDirection.value = null
-  emit('records-change', [])
-  errorMessage.value = ''
-  expandedRemarkKeys.value = new Set()
-})
+watch(
+  () => [props.stock.code, props.tradeDate],
+  () => {
+    replayGate.invalidate()
+    running.value = false
+    records.value = []
+    lastDirection.value = null
+    emit('records-change', [])
+    errorMessage.value = ''
+    expandedRemarkKeys.value = new Set()
+  }
+)
+
+onBeforeUnmount(() => replayGate.invalidate())
 
 function hasValue(value: unknown) {
   return value !== null && value !== undefined && value !== ''
@@ -152,18 +167,28 @@ function toggleRemark(record: RuleRecord, index: number) {
 
 <template>
   <aside class="panel right-panel">
-<!--    <div class="panel-head">-->
-<!--      <span>{{ stock.name }} 回测</span>-->
-<!--      <small>{{ stock.code }}</small>-->
-<!--    </div>-->
+    <!--    <div class="panel-head">-->
+    <!--      <span>{{ stock.name }} 回测</span>-->
+    <!--      <small>{{ stock.code }}</small>-->
+    <!--    </div>-->
 
     <div class="side-body">
       <section class="info-section backtest-runner">
         <div class="backtest-action-row">
-          <button type="button" class="primary-button backtest-run-button buy" :disabled="running" @click="runBacktest(1)">
+          <button
+            type="button"
+            class="primary-button backtest-run-button buy"
+            :disabled="running"
+            @click="runBacktest(1)"
+          >
             {{ running ? '执行中' : '买入回测' }}
           </button>
-          <button type="button" class="primary-button backtest-run-button sell" :disabled="running" @click="runBacktest(2)">
+          <button
+            type="button"
+            class="primary-button backtest-run-button sell"
+            :disabled="running"
+            @click="runBacktest(2)"
+          >
             {{ running ? '执行中' : '卖出回测' }}
           </button>
         </div>
@@ -171,7 +196,10 @@ function toggleRemark(record: RuleRecord, index: number) {
       </section>
 
       <section class="info-section backtest-records">
-        <h3>回测记录 <small>{{ records.length }} 条</small></h3>
+        <h3>
+          回测记录
+          <small>{{ records.length }} 条</small>
+        </h3>
         <div v-if="records.length" class="rule-record-list">
           <article
             v-for="(record, index) in records"
@@ -185,7 +213,9 @@ function toggleRemark(record: RuleRecord, index: number) {
                 <em class="rule-code-tag">规则 {{ formatInteger(record.ruleCode) }}</em>
               </strong>
               <small class="rule-record-meta">
-                <b :class="['rule-action-tag', actionTypeClass(record.actionType)]">{{ actionTypeLabel(record.actionType) }}</b>
+                <b :class="['rule-action-tag', actionTypeClass(record.actionType)]">
+                  {{ actionTypeLabel(record.actionType) }}
+                </b>
                 <b :class="['rule-phase-tag', auctionPhase(record.time)]">{{ auctionPhaseLabel(record.time) }}</b>
                 <span>{{ record.symbol || stock.code }}</span>
               </small>
@@ -222,6 +252,13 @@ function toggleRemark(record: RuleRecord, index: number) {
         </div>
         <p v-else class="backtest-output muted">{{ emptyMessage }}</p>
       </section>
+
+      <HistoricalExecutionRules
+        :rules="historicalRules"
+        :stock-code="stock.code"
+        :stock-name="stock.name"
+        :trade-date="tradeDate"
+      />
     </div>
   </aside>
 </template>

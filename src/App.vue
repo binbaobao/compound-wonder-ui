@@ -5,10 +5,33 @@ import AShareMinuteChart from './components/AShareMinuteChart.vue'
 import BacktestPanel from './components/BacktestPanel.vue'
 import KLineChartBox from './components/KLineChartBox.vue'
 import HistoricalBacktestPanel from './components/HistoricalBacktestPanel.vue'
+import SingleModeBacktestPanel from './components/SingleModeBacktestPanel.vue'
 import StockPool from './components/StockPool.vue'
-import { fetchDailyBars, fetchEmotionSummary, fetchMinuteBars, fetchStockPool, fetchTradingDays, runStockSelectionBacktest } from './api/market'
-import type { ChartBar } from './types/market'
-import type { BacktestSummary, EmotionCalendarDay, EmotionCycleSummary, HistoricalBacktestPosition, MinuteTick, RuleRecord, StockPoolItem, StockScope, TradeEvent } from './types/market'
+import {
+  fetchDailyBars,
+  fetchEmotionSummary,
+  fetchMinuteBars,
+  fetchStockPool,
+  fetchTradingDays,
+  runStockSelectionBacktest
+} from './api/market'
+import type {
+  ChartBar,
+  EmotionCalendarDay,
+  EmotionCycleSummary,
+  HistoricalBacktestPosition,
+  HistoricalBacktestRule,
+  MinuteTick,
+  RuleRecord,
+  SingleModeBacktestSample,
+  StockPoolItem,
+  StockScope,
+  TradeEvent
+} from './types/market'
+import { findHistoricalRules } from './utils/historicalRules'
+import { isHistoricalSt } from './utils/marketRules'
+import { isAbortError, RequestGate } from './utils/requestGate'
+import { buildMinuteTradeEvents } from './utils/tradeEvents'
 
 const tradeDate = ref('')
 const detailDate = ref('')
@@ -19,10 +42,9 @@ const tradingDays = ref<EmotionCalendarDay[]>([])
 const selectedStock = ref<StockPoolItem | null>(null)
 const pendingHistoricalStock = ref<StockPoolItem | null>(null)
 const dailyBars = ref<ChartBar[]>([])
-const minuteBars = ref<ChartBar[]>([])
 const minuteTicks = ref<MinuteTick[]>([])
-const events = ref<TradeEvent[]>([])
 const backtestRecords = ref<RuleRecord[]>([])
+const historicalRules = ref<HistoricalBacktestRule[]>([])
 const emotionSummary = ref<EmotionCycleSummary | null>(null)
 const loading = ref(false)
 const reselecting = ref(false)
@@ -31,20 +53,21 @@ const errorMessage = ref('')
 const detailDateOpen = ref(false)
 const detailDatePicker = ref<HTMLElement | null>(null)
 const detailDateMenu = ref<HTMLElement | null>(null)
+const backtestWorkspaceTab = ref<'mixed' | 'single'>('single')
+const tradingDaysGate = new RequestGate()
+const stockPoolGate = new RequestGate()
+const emotionGate = new RequestGate()
+const chartGate = new RequestGate()
+const reselectGate = new RequestGate()
 
-const summary = computed<BacktestSummary>(() => ({
-  buyCount: events.value.filter(event => event.side === 'B').length,
-  sellCount: events.value.filter(event => event.side === 'S').length,
-  maxProfitRate: selectedStock.value?.resultRate ?? 0,
-  closeProfitRate: selectedStock.value?.resultRate ?? 0
-}))
-
-const selectedResultRate = computed(() => selectedStock.value?.resultRate ?? 0)
 const selectedPrice = computed(() => selectedStock.value?.price ?? 0)
 
 const selectedCode = computed(() => selectedStock.value?.code ?? '')
+const selectedHistoricalRules = computed(() =>
+  findHistoricalRules(historicalRules.value, selectedCode.value, detailDate.value)
+)
 const detailDateOptions = computed(() => {
-  const centerIndex = dailyBars.value.findIndex(bar => dailyBarDate(bar) === tradeDate.value)
+  const centerIndex = dailyBars.value.findIndex((bar) => dailyBarDate(bar) === tradeDate.value)
   if (centerIndex < 0) {
     return dailyBars.value.slice(-21).reverse()
   }
@@ -52,39 +75,41 @@ const detailDateOptions = computed(() => {
   const end = Math.min(dailyBars.value.length, centerIndex + 11)
   return dailyBars.value.slice(start, end).reverse()
 })
-const selectedDailyBarIndex = computed(() => dailyBars.value.findIndex(bar => (bar.date ?? formatDateKey(bar.timestamp)) === detailDate.value))
+const selectedDailyBarIndex = computed(() =>
+  dailyBars.value.findIndex((bar) => (bar.date ?? formatDateKey(bar.timestamp)) === detailDate.value)
+)
 const selectedDailyBar = computed(() => {
   const index = selectedDailyBarIndex.value
   return index >= 0 ? dailyBars.value[index] : null
 })
-const previousClose = computed(() => selectedDailyBar.value?.prevClose ?? selectedDailyBar.value?.open ?? selectedPrice.value)
+const selectedIsSt = computed(() =>
+  selectedStock.value ? isHistoricalSt(selectedStock.value, selectedDailyBar.value ?? undefined) : false
+)
+const previousClose = computed(
+  () => selectedDailyBar.value?.prevClose ?? selectedDailyBar.value?.open ?? selectedPrice.value
+)
 const quoteOpen = computed(() => selectedDailyBar.value?.open ?? selectedPrice.value)
 const quoteClose = computed(() => selectedDailyBar.value?.close ?? selectedPrice.value)
 const quoteHigh = computed(() => selectedDailyBar.value?.high ?? selectedPrice.value)
 const quoteLow = computed(() => selectedDailyBar.value?.low ?? selectedPrice.value)
 const selectedBoardLabel = computed(() => {
   const days = selectedDailyBar.value?.consecutiveLimitUpDays ?? 0
-  return days > 0 ? `${days}板` : selectedStock.value?.boardLabel ?? ''
+  return days > 0 ? `${days}板` : (selectedStock.value?.boardLabel ?? '')
 })
 const backtestTradeEvents = computed<TradeEvent[]>(() => {
   const source = selectedDailyBar.value
   if (!source) return []
-  return backtestRecords.value
-    .filter(record => record.actionType === 1 || record.actionType === 2 || record.actionType === 3)
-    .map((record, index) => ({
-      time: formatRecordTime(record.time),
-      side: record.actionType === 1 ? 'B' : record.actionType === 2 ? 'S' : 'C',
-      price: record.price ? record.price / 100 : source.close,
-      reason: record.remark ?? `规则 ${record.ruleCode ?? index + 1}`,
-      profitRate: record.increase,
-      timestamp: source.timestamp,
-      actionType: record.actionType
-    }))
+  return buildMinuteTradeEvents({
+    replayRecords: backtestRecords.value,
+    historicalRules: selectedHistoricalRules.value,
+    fallbackPrice: source.close,
+    timestamp: source.timestamp
+  })
 })
 const floatMarketRatio = computed(() => {
   const floatShares = selectedDailyBar.value?.floatShares ?? 0
   const totalShares = selectedDailyBar.value?.totalShares ?? 0
-  return totalShares > 0 ? floatShares / totalShares * 100 : 0
+  return totalShares > 0 ? (floatShares / totalShares) * 100 : 0
 })
 const maxTurnoverBar = computed(() => {
   const currentDate = detailDate.value
@@ -106,8 +131,6 @@ const visibleStatus = computed(() => {
   if (errorMessage.value) return errorMessage.value
   return apiMessage.value
 })
-
-const canLoad = computed(() => Boolean(tradeDate.value))
 
 const scopeName = computed(() => {
   if (scope.value === 'recommend') return '推荐'
@@ -141,23 +164,44 @@ function selectStock(stock: StockPoolItem) {
 
 /** 从历史持仓跳转到该股票的买入日分时与日 K 图。 */
 function selectHistoricalPosition(position: HistoricalBacktestPosition) {
+  selectHistoricalStock(position.symbol, position.symbolName, position.buyDate, position.historySt ?? position.st)
+}
+
+/** 从全量规则记录跳转到该股票对应交易日的分时与日 K 图。 */
+function selectHistoricalRule(rule: HistoricalBacktestRule) {
+  selectHistoricalStock(rule.symbol, rule.symbolName, rule.tradeDate, rule.historySt ?? rule.st)
+}
+
+/** 从 Model 3 独立样本跳转到买入日；未买入样本跳转到计划交易日。 */
+function selectSingleModeSample(sample: SingleModeBacktestSample) {
+  selectHistoricalStock(
+    sample.symbol,
+    sample.symbolName,
+    sample.buyDate || sample.tradeDate,
+    sample.historySt ?? sample.st
+  )
+}
+
+/** 使用回测记录中的股票代码和交易日期统一切换图表与日期控件。 */
+function selectHistoricalStock(symbol: string, symbolName: string | undefined, date: string, historySt?: number) {
   const historicalStock = normalizeStock({
-    code: position.symbol,
+    code: symbol,
     symbolId: 0,
-    name: position.symbolName || position.symbol,
+    name: symbolName || symbol,
     boardLabel: '',
     theme: '',
     strength: 0,
     amount: '0',
     price: 0,
     resultRate: 0,
-    scope: scope.value
+    scope: scope.value,
+    historySt
   })
   selectedStock.value = historicalStock
-  detailDate.value = position.buyDate
-  if (tradeDate.value !== position.buyDate) {
+  detailDate.value = date
+  if (tradeDate.value !== date) {
     pendingHistoricalStock.value = historicalStock
-    tradeDate.value = position.buyDate
+    tradeDate.value = date
   }
 }
 
@@ -167,7 +211,7 @@ function rateClass(value: number) {
 
 function quoteRate(value: number) {
   if (!previousClose.value) return 0
-  return (value - previousClose.value) / previousClose.value * 100
+  return ((value - previousClose.value) / previousClose.value) * 100
 }
 
 function formatPercent(value?: number) {
@@ -199,14 +243,12 @@ function formatDateKey(timestamp: number) {
   return `${year}-${month}-${day}`
 }
 
-function formatRecordTime(value?: number) {
-  if (value == null) return ''
-  const text = String(value).padStart(9, '0')
-  return `${Number(text.slice(0, 2))}:${text.slice(2, 4)}:${text.slice(4, 6)}:${text.slice(6, 9)}`
-}
-
 function handleBacktestRecords(records: RuleRecord[]) {
   backtestRecords.value = records
+}
+
+function handleHistoricalRules(rules: HistoricalBacktestRule[]) {
+  historicalRules.value = rules
 }
 
 function dailyBarDate(bar: ChartBar) {
@@ -246,8 +288,10 @@ function handleDocumentClick(event: MouseEvent) {
 }
 
 async function loadTradingDays() {
+  const request = tradingDaysGate.begin()
   try {
-    const days = await fetchTradingDays()
+    const days = await fetchTradingDays(request.signal)
+    if (!tradingDaysGate.isCurrent(request.id)) return
     tradingDays.value = days
     if (days.length) {
       tradeDate.value = days[days.length - 1].date
@@ -256,7 +300,8 @@ async function loadTradingDays() {
       errorMessage.value = '情绪周期日历为空'
     }
   } catch (error) {
-    errorMessage.value = `情绪周期日历接口加载失败`
+    if (isAbortError(error) || !tradingDaysGate.isCurrent(request.id)) return
+    errorMessage.value = error instanceof Error ? `情绪周期日历加载失败：${error.message}` : '情绪周期日历接口加载失败'
   }
 }
 
@@ -264,140 +309,165 @@ async function loadStockPool() {
   if (!tradeDate.value) return
   const requestedDate = tradeDate.value
   const requestedScope = scope.value
+  const request = stockPoolGate.begin()
   loading.value = true
   errorMessage.value = ''
   try {
-    const rows = await fetchStockPool(requestedDate, requestedScope, 300)
-    if (tradeDate.value !== requestedDate || scope.value !== requestedScope) return
-    stocks.value = rows.map(normalizeStock)
-    const historicalStock = pendingHistoricalStock.value
-    selectedStock.value = historicalStock
-      ? stocks.value.find(stock => stock.code === historicalStock.code) ?? historicalStock
-      : stocks.value[0] ?? null
-    pendingHistoricalStock.value = null
+    const rows = await fetchStockPool(requestedDate, requestedScope, 300, request.signal)
+    if (!stockPoolGate.isCurrent(request.id)) return
+    if (!applyStockPoolRows(rows, requestedDate, requestedScope)) return
     apiMessage.value = rows.length ? `数据库数据：${requestedDate}` : `数据库无${scopeName.value}股票`
   } catch (error) {
-    if (tradeDate.value !== requestedDate || scope.value !== requestedScope) return
+    if (
+      isAbortError(error) ||
+      !stockPoolGate.isCurrent(request.id) ||
+      tradeDate.value !== requestedDate ||
+      scope.value !== requestedScope
+    )
+      return
     stocks.value = []
     selectedStock.value = null
     pendingHistoricalStock.value = null
-    errorMessage.value = `后端接口加载失败`
+    errorMessage.value = error instanceof Error ? `股票池加载失败：${error.message}` : '股票池加载失败'
   } finally {
-    loading.value = false
+    if (stockPoolGate.isCurrent(request.id)) loading.value = false
   }
 }
 
+/** 仅在请求对应的日期和范围仍有效时，将股票池数据写入页面状态。 */
+function applyStockPoolRows(rows: StockPoolItem[], requestedDate: string, requestedScope: StockScope) {
+  if (tradeDate.value !== requestedDate || scope.value !== requestedScope) return false
+  stocks.value = rows.map(normalizeStock)
+  const historicalStock = pendingHistoricalStock.value
+  selectedStock.value = historicalStock
+    ? (stocks.value.find((stock) => stock.code === historicalStock.code) ?? historicalStock)
+    : (stocks.value[0] ?? null)
+  pendingHistoricalStock.value = null
+  return true
+}
+
+/** 从交易日列表中查找当前盯盘日对应的前一个选股日。 */
+function previousSelectionDate(tradingDate: string) {
+  return tradingDays.value
+    .filter((day) => day.date < tradingDate)
+    .sort((left, right) => right.date.localeCompare(left.date))[0]?.date
+}
+
+/** 按前一交易日收盘数据重新选股，并刷新当前交易日的推荐盯盘池。 */
 async function reselectStocks() {
   if (!tradeDate.value || reselecting.value) return
-  const currentIndex = tradingDays.value.findIndex(day => day.date === tradeDate.value)
-  const selectionDate = currentIndex > 0
-    ? tradingDays.value[currentIndex - 1].date
-    : tradeDate.value
+  const requestedTradeDate = tradeDate.value
+  const selectionDate = previousSelectionDate(requestedTradeDate)
+  if (!selectionDate) {
+    errorMessage.value = `${requestedTradeDate} 没有可用的前一交易日，无法重新选股`
+    return
+  }
   reselecting.value = true
   errorMessage.value = ''
+  const request = reselectGate.begin()
   try {
-    await runStockSelectionBacktest(selectionDate)
-    await loadStockPool()
-    apiMessage.value = `重新选股完成：${selectionDate}`
+    await runStockSelectionBacktest(selectionDate, request.signal)
+    const rows = await fetchStockPool(requestedTradeDate, 'recommend', 300, request.signal)
+    if (!reselectGate.isCurrent(request.id)) return
+    if (!applyStockPoolRows(rows, requestedTradeDate, 'recommend')) return
+    apiMessage.value = `已按 ${selectionDate} 重新选股，${requestedTradeDate} 推荐池已刷新（${rows.length} 只）`
   } catch (error) {
-    errorMessage.value = '重新选股接口调用失败'
+    if (isAbortError(error) || !reselectGate.isCurrent(request.id)) return
+    errorMessage.value = error instanceof Error ? `重新选股失败：${error.message}` : '重新选股接口调用失败'
   } finally {
-    reselecting.value = false
+    if (reselectGate.isCurrent(request.id)) reselecting.value = false
   }
 }
 
 async function loadEmotionSummary() {
   if (!tradeDate.value) {
+    emotionGate.invalidate()
     emotionSummary.value = null
     return
   }
+  const requestedDate = tradeDate.value
+  const request = emotionGate.begin()
   try {
-    emotionSummary.value = await fetchEmotionSummary(tradeDate.value)
+    const nextSummary = await fetchEmotionSummary(requestedDate, request.signal)
+    if (emotionGate.isCurrent(request.id) && tradeDate.value === requestedDate) {
+      emotionSummary.value = nextSummary
+    }
   } catch (error) {
-    emotionSummary.value = null
+    if (!isAbortError(error) && emotionGate.isCurrent(request.id)) emotionSummary.value = null
   }
 }
 
-async function loadDailyBars() {
+async function loadChartData() {
   if (!detailDate.value || !selectedStock.value) {
+    chartGate.invalidate()
     dailyBars.value = []
-    return
-  }
-  try {
-    dailyBars.value = await fetchDailyBars(selectedStock.value.code, detailDate.value, 300, 100)
-  } catch (error) {
-    dailyBars.value = []
-  }
-}
-
-async function loadMinuteBars() {
-  if (!detailDate.value || !selectedStock.value) {
-    minuteBars.value = []
     minuteTicks.value = []
     return
   }
+  const stockCode = selectedStock.value.code
+  const date = detailDate.value
+  const request = chartGate.begin()
   try {
-    const ticks = await fetchMinuteBars(selectedStock.value.code, detailDate.value)
-    minuteTicks.value = ticks
-    minuteBars.value = ticks.map(tick => ({
-      timestamp: tick.timestamp,
-      open: tick.price,
-      high: tick.price,
-      low: tick.price,
-      close: tick.price,
-      volume: tick.sellerOrderId
-    }))
+    const [barsResult, ticksResult] = await Promise.allSettled([
+      fetchDailyBars(stockCode, date, 300, 100, request.signal),
+      fetchMinuteBars(stockCode, date, request.signal)
+    ])
+    if (!chartGate.isCurrent(request.id) || selectedStock.value?.code !== stockCode || detailDate.value !== date) return
+    dailyBars.value = barsResult.status === 'fulfilled' ? barsResult.value : []
+    minuteTicks.value = ticksResult.status === 'fulfilled' ? ticksResult.value : []
+    if (
+      barsResult.status === 'rejected' &&
+      ticksResult.status === 'rejected' &&
+      !isAbortError(barsResult.reason) &&
+      !isAbortError(ticksResult.reason)
+    ) {
+      errorMessage.value = `图表数据加载失败：${barsResult.reason instanceof Error ? barsResult.reason.message : '接口异常'}`
+    }
   } catch (error) {
-    minuteBars.value = []
+    if (isAbortError(error) || !chartGate.isCurrent(request.id)) return
+    dailyBars.value = []
     minuteTicks.value = []
   }
 }
 
-async function reloadAll() {
-  if (!canLoad.value) return
-  await loadEmotionSummary()
-  await loadStockPool()
-  await loadMinuteBars()
-  await loadDailyBars()
-}
-
-watch([tradeDate, scope], async ([date]) => {
-  if (date && detailDate.value !== date) {
+watch([tradeDate, scope], async ([date], previous) => {
+  if (!date) return
+  const previousDate = previous?.[0]
+  const previousScope = previous?.[1]
+  if (!pendingHistoricalStock.value && (date !== previousDate || scope.value !== previousScope)) {
+    selectedStock.value = null
+    dailyBars.value = []
+    minuteTicks.value = []
+    backtestRecords.value = []
+  }
+  if (!pendingHistoricalStock.value && detailDate.value !== date) {
     detailDate.value = date
   }
-  await reloadAll()
+  await Promise.all([loadEmotionSummary(), loadStockPool()])
 })
-watch(scope, () => {
-  selectedStock.value = null
-  dailyBars.value = []
-  minuteBars.value = []
-  minuteTicks.value = []
-  events.value = []
+watch([() => selectedStock.value?.code, detailDate], async () => {
   backtestRecords.value = []
-})
-watch(() => selectedStock.value?.code, async () => {
-  backtestRecords.value = []
-  await loadMinuteBars()
-  await loadDailyBars()
+  await loadChartData()
 })
 watch(detailDate, async () => {
-  backtestRecords.value = []
   if (detailDateOpen.value) {
     await nextTick()
     centerSelectedDetailDate()
   }
-  await loadDailyBars()
-  await loadMinuteBars()
 })
 
 onMounted(async () => {
   document.addEventListener('click', handleDocumentClick)
   await loadTradingDays()
-  await reloadAll()
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleDocumentClick)
+  tradingDaysGate.invalidate()
+  stockPoolGate.invalidate()
+  emotionGate.invalidate()
+  chartGate.invalidate()
+  reselectGate.invalidate()
 })
 </script>
 
@@ -436,7 +506,9 @@ onBeforeUnmount(() => {
           :previous-close="previousClose"
           :stock-code="selectedStock?.code ?? ''"
           :trade-date="detailDate"
-          :is-st="selectedStock?.st === 1 || selectedStock?.historySt === 1"
+          :is-st="selectedIsSt"
+          :price-limit-rate="selectedDailyBar?.priceLimitRate"
+          :no-price-limit="selectedDailyBar?.noPriceLimit"
           :float-shares="selectedDailyBar?.floatShares ?? 0"
           :height="430"
           :empty-text="selectedStock ? '暂无分时数据' : '请选择左侧股票'"
@@ -444,7 +516,11 @@ onBeforeUnmount(() => {
           <template v-if="selectedStock" #head>
             <div class="quote-main minute-quote-main">
               <div ref="detailDatePicker" class="date-picker quote-date-picker">
-                <button class="date-control light date-trigger quote-date-trigger" type="button" @click="toggleDetailDateMenu">
+                <button
+                  class="date-control light date-trigger quote-date-trigger"
+                  type="button"
+                  @click="toggleDetailDateMenu"
+                >
                   <CalendarDays :size="15" />
                   <span>{{ detailDate || '选择交易日' }}</span>
                 </button>
@@ -476,46 +552,75 @@ onBeforeUnmount(() => {
               <div class="quote-ohlc">
                 <div class="quote-ohlc-col">
                   <span>
-                    开 <b>{{ quoteOpen.toFixed(2) }}</b>
+                    开
+                    <b>{{ quoteOpen.toFixed(2) }}</b>
                     <small :class="rateClass(quoteRate(quoteOpen))">({{ quoteRate(quoteOpen).toFixed(2) }}%)</small>
                   </span>
                   <span>
-                    收 <b>{{ quoteClose.toFixed(2) }}</b>
+                    收
+                    <b>{{ quoteClose.toFixed(2) }}</b>
                     <small :class="rateClass(quoteRate(quoteClose))">({{ quoteRate(quoteClose).toFixed(2) }}%)</small>
                   </span>
                 </div>
                 <div class="quote-ohlc-col">
                   <span>
-                    高 <b>{{ quoteHigh.toFixed(2) }}</b>
+                    高
+                    <b>{{ quoteHigh.toFixed(2) }}</b>
                     <small :class="rateClass(quoteRate(quoteHigh))">({{ quoteRate(quoteHigh).toFixed(2) }}%)</small>
                   </span>
                   <span>
-                    低 <b>{{ quoteLow.toFixed(2) }}</b>
+                    低
+                    <b>{{ quoteLow.toFixed(2) }}</b>
                     <small :class="rateClass(quoteRate(quoteLow))">({{ quoteRate(quoteLow).toFixed(2) }}%)</small>
                   </span>
                 </div>
               </div>
               <div class="quote-extra-metrics">
                 <div>
-                  <span>换手 <b>{{ formatPercent(selectedDailyBar?.turnoverRate) }}</b></span>
-                  <span>成交量 <b>{{ formatVolume(selectedDailyBar?.volume) }}</b></span>
+                  <span>
+                    换手
+                    <b>{{ formatPercent(selectedDailyBar?.turnoverRate) }}</b>
+                  </span>
+                  <span>
+                    成交量
+                    <b>{{ formatVolume(selectedDailyBar?.volume) }}</b>
+                  </span>
                 </div>
                 <div>
-                  <span>振幅 <b>{{ formatPercent(selectedDailyBar?.amplitude) }}</b></span>
-                  <span>成交额 <b>{{ formatTurnover(selectedDailyBar?.turnover) }}</b></span>
+                  <span>
+                    振幅
+                    <b>{{ formatPercent(selectedDailyBar?.amplitude) }}</b>
+                  </span>
+                  <span>
+                    成交额
+                    <b>{{ formatTurnover(selectedDailyBar?.turnover) }}</b>
+                  </span>
                 </div>
               </div>
               <div class="quote-metrics">
-                <span v-if="selectedStock.st === 1">ST</span>
+                <span v-if="selectedIsSt">ST</span>
               </div>
               <div class="quote-extra-metrics quote-market-metrics">
                 <div>
-                  <span>总市值 <b>{{ formatMarketCap(selectedDailyBar?.totalMarketCap) }}</b></span>
-                  <span>流通市值 <b>{{ formatMarketCap(selectedDailyBar?.floatMarketCap) }}</b></span>
+                  <span>
+                    总市值
+                    <b>{{ formatMarketCap(selectedDailyBar?.totalMarketCap) }}</b>
+                  </span>
+                  <span>
+                    流通市值
+                    <b>{{ formatMarketCap(selectedDailyBar?.floatMarketCap) }}</b>
+                  </span>
                 </div>
                 <div>
-                  <span>流通比例 <b>{{ formatPercent(floatMarketRatio) }}</b></span>
-                  <span>最大换手 <b>{{ formatPercent(maxTurnoverBar?.turnoverRate) }}</b><small>{{ maxTurnoverDate }}</small></span>
+                  <span>
+                    流通比例
+                    <b>{{ formatPercent(floatMarketRatio) }}</b>
+                  </span>
+                  <span>
+                    最大换手
+                    <b>{{ formatPercent(maxTurnoverBar?.turnoverRate) }}</b>
+                    <small>{{ maxTurnoverDate }}</small>
+                  </span>
                 </div>
               </div>
             </div>
@@ -532,18 +637,45 @@ onBeforeUnmount(() => {
           show-volume
         />
 
-        <HistoricalBacktestPanel
-          :default-end-date="detailDate || tradeDate"
-          @select-position="selectHistoricalPosition"
-        />
+        <section class="backtest-workspace">
+          <nav class="backtest-workspace-tabs" aria-label="回测类型">
+            <button
+              type="button"
+              :class="{ active: backtestWorkspaceTab === 'single' }"
+              @click="backtestWorkspaceTab = 'single'"
+            >
+              单模式全量
+            </button>
+            <button
+              type="button"
+              :class="{ active: backtestWorkspaceTab === 'mixed' }"
+              @click="backtestWorkspaceTab = 'mixed'"
+            >
+              多模式混合收益
+            </button>
+          </nav>
+          <div v-show="backtestWorkspaceTab === 'single'" class="backtest-workspace-panel">
+            <SingleModeBacktestPanel
+              :default-end-date="detailDate || tradeDate"
+              @select-sample="selectSingleModeSample"
+            />
+          </div>
+          <div v-show="backtestWorkspaceTab === 'mixed'" class="backtest-workspace-panel">
+            <HistoricalBacktestPanel
+              :default-end-date="detailDate || tradeDate"
+              @select-position="selectHistoricalPosition"
+              @select-rule="selectHistoricalRule"
+              @rules-change="handleHistoricalRules"
+            />
+          </div>
+        </section>
       </section>
 
       <BacktestPanel
         v-if="selectedStock"
         :stock="selectedStock"
         :trade-date="detailDate"
-        :summary="summary"
-        :events="events"
+        :historical-rules="selectedHistoricalRules"
         @records-change="handleBacktestRecords"
       />
       <aside v-else class="panel right-panel">
@@ -558,7 +690,6 @@ onBeforeUnmount(() => {
           </section>
         </div>
       </aside>
-
     </main>
   </div>
 </template>

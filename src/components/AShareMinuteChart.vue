@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { MinuteTick, TradeEvent, TradeSide } from '../types/market'
+import { resolvePriceLimitRate } from '../utils/marketRules'
 
 type PhaseType = 'auction' | 'continuous' | 'break'
 
@@ -23,11 +24,14 @@ interface PlotPoint {
 }
 
 interface BsMarker {
-  side: TradeSide
+  key: string
+  side: Exclude<TradeSide, 'C'>
   time: string
   price: number
   x: number
   y: number
+  badgeX: number
+  badgeY: number
   label: string
   reason: string
 }
@@ -41,6 +45,8 @@ const props = defineProps<{
   stockCode: string
   tradeDate: string
   isSt?: boolean
+  priceLimitRate?: number | null
+  noPriceLimit?: boolean
   floatShares?: number
   height?: number
   emptyText?: string
@@ -84,7 +90,7 @@ const plotBottom = computed(() => height.value - padding.bottom - volumeHeight -
 const plotHeight = computed(() => plotBottom.value - plotTop)
 const volumeTop = computed(() => plotBottom.value + priceBottomGap)
 const volumeBottom = computed(() => height.value - padding.bottom)
-const auctionVolumeHeight = computed(() => Math.max(1, (volumeBottom.value - volumeTop.value) * 6 / 7 - 2))
+const auctionVolumeHeight = computed(() => Math.max(1, ((volumeBottom.value - volumeTop.value) * 6) / 7 - 2))
 
 function toSecond(time: string) {
   const [hour, minute, second = 0] = time.split(':').map(Number)
@@ -95,16 +101,9 @@ function tickSecond(tick: MinuteTick) {
   return toSecond(tick.tickTime)
 }
 
-function timeLabel(secondOfDay: number) {
-  const minuteOfDay = Math.floor(secondOfDay / 60)
-  const hourText = `${Math.floor(minuteOfDay / 60)}`.padStart(2, '0')
-  const minuteText = `${minuteOfDay % 60}`.padStart(2, '0')
-  return `${hourText}:${minuteText}`
-}
-
 const sessionRanges = computed(() => {
   let cursor = 0
-  return phases.map(phase => {
+  return phases.map((phase) => {
     const startSecond = toSecond(phase.start)
     const endSecond = toSecond(phase.end)
     const length = endSecond - startSecond
@@ -129,40 +128,52 @@ const totalSeconds = computed(() => {
 })
 
 function secondIndex(secondOfDay: number) {
-  const range = sessionRanges.value.find(item => secondOfDay >= item.startSecond && secondOfDay <= item.endSecond)
+  const range = sessionRanges.value.find((item) => secondOfDay >= item.startSecond && secondOfDay <= item.endSecond)
   if (!range) return null
   const offset = Math.min(secondOfDay - range.startSecond, range.length)
-  return range.startIndex + offset / range.length * range.visualLength
+  return range.startIndex + (offset / range.length) * range.visualLength
 }
 
 function xForSecond(secondOfDay: number) {
   const index = secondIndex(secondOfDay)
   if (index == null) return null
-  return padding.left + index / totalSeconds.value * plotWidth.value
+  return padding.left + (index / totalSeconds.value) * plotWidth.value
 }
 
-const validTicks = computed(() => (
+const validTicks = computed(() =>
   props.ticks
-    .filter(tick => Number.isFinite(tick.price) && tick.price > 0 && secondIndex(tickSecond(tick)) != null)
+    .filter((tick) => Number.isFinite(tick.price) && tick.price > 0 && secondIndex(tickSecond(tick)) != null)
     .sort((left, right) => left.timestamp - right.timestamp)
-))
+)
 
 // 分时图按 A 股涨跌停价固定 y 轴，避免不同日期切换时被 tick 波动误导。
 const yScale = computed(() => {
-  const base = props.previousClose > 0 ? props.previousClose : validTicks.value[0]?.price ?? 0
+  const base = props.previousClose > 0 ? props.previousClose : (validTicks.value[0]?.price ?? 0)
   const limitRate = priceLimitRate.value
-  const upper = base > 0 ? roundPrice(base * (1 + limitRate)) : 0.01
-  const lower = base > 0 ? roundPrice(base * (1 - limitRate)) : 0
+  const observedPrices = [base, ...validTicks.value.map((tick) => tick.price)].filter((price) => price > 0)
+  const dataMin = observedPrices.length ? Math.min(...observedPrices) : 0
+  const dataMax = observedPrices.length ? Math.max(...observedPrices) : 0.01
+  const dataPadding = Math.max((dataMax - dataMin) * 0.1, base * 0.01, 0.01)
+  const upper =
+    limitRate == null ? roundPrice(dataMax + dataPadding) : base > 0 ? roundPrice(base * (1 + limitRate)) : 0.01
+  const lower =
+    limitRate == null
+      ? Math.max(0, roundPrice(dataMin - dataPadding))
+      : base > 0
+        ? roundPrice(base * (1 - limitRate))
+        : 0
   return { base, upper, lower }
 })
 
-const priceLimitRate = computed(() => {
-  const code = props.stockCode.trim()
-  const prefix = code.slice(0, 2)
-  if (prefix === '30' || prefix === '68') return 0.2
-  if ((prefix === '00' || prefix === '60') && props.isSt && props.tradeDate < '2026-07-06') return 0.05
-  return 0.1
-})
+const priceLimitRate = computed(() =>
+  resolvePriceLimitRate({
+    stockCode: props.stockCode,
+    tradeDate: props.tradeDate,
+    isSt: Boolean(props.isSt),
+    explicitRate: props.priceLimitRate,
+    noPriceLimit: props.noPriceLimit
+  })
+)
 
 function roundPrice(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100
@@ -171,21 +182,23 @@ function roundPrice(value: number) {
 function yForPrice(price: number) {
   const { upper, lower } = yScale.value
   if (upper === lower) return plotTop + plotHeight.value / 2
-  const y = plotTop + (upper - price) / (upper - lower) * plotHeight.value
+  const y = plotTop + ((upper - price) / (upper - lower)) * plotHeight.value
   return Math.min(plotBottom.value, Math.max(plotTop, y))
 }
 
-const points = computed<PlotPoint[]>(() => validTicks.value.map((tick, index) => {
-  const second = tickSecond(tick)
-  return {
-    key: `${tick.timestamp}-${tick.tickTime}`,
-    index,
-    x: xForSecond(second) ?? padding.left,
-    y: yForPrice(tick.price),
-    price: tick.price,
-    tick
-  }
-}))
+const points = computed<PlotPoint[]>(() =>
+  validTicks.value.map((tick, index) => {
+    const second = tickSecond(tick)
+    return {
+      key: `${tick.timestamp}-${tick.tickTime}`,
+      index,
+      x: xForSecond(second) ?? padding.left,
+      y: yForPrice(tick.price),
+      price: tick.price,
+      tick
+    }
+  })
+)
 
 const activePoint = computed(() => {
   if (lockedIndex.value != null && points.value[lockedIndex.value]) {
@@ -209,7 +222,9 @@ const isActiveAuction = computed(() => {
 
 const linePath = computed(() => {
   if (!points.value.length) return ''
-  return points.value.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ')
+  return points.value
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(' ')
 })
 
 const areaPath = computed(() => {
@@ -219,113 +234,144 @@ const areaPath = computed(() => {
   return `${linePath.value} L ${last.x.toFixed(2)} ${plotBottom.value.toFixed(2)} L ${first.x.toFixed(2)} ${plotBottom.value.toFixed(2)} Z`
 })
 
-const baseY = computed(() => yForPrice(yScale.value.base))
-
 const gridLines = computed(() => {
   const { base, upper, lower } = yScale.value
-  return [upper, (upper + base) / 2, base, (base + lower) / 2, lower].map(price => ({
+  return [upper, (upper + base) / 2, base, (base + lower) / 2, lower].map((price) => ({
     price,
     y: yForPrice(price),
-    rate: base ? (price - base) / base * 100 : 0
+    rate: base ? ((price - base) / base) * 100 : 0
   }))
 })
 
-const phaseRects = computed(() => sessionRanges.value.map(phase => {
-  const startX = xForSecond(phase.startSecond) ?? padding.left
-  const endX = xForSecond(phase.endSecond) ?? padding.left
-  return {
-    ...phase,
-    x: startX,
-    width: Math.max(1, endX - startX)
-  }
-}))
+const phaseRects = computed(() =>
+  sessionRanges.value.map((phase) => {
+    const startX = xForSecond(phase.startSecond) ?? padding.left
+    const endX = xForSecond(phase.endSecond) ?? padding.left
+    return {
+      ...phase,
+      x: startX,
+      width: Math.max(1, endX - startX)
+    }
+  })
+)
 
-const timeGridLines = computed(() => timeGridSeconds.map(second => {
-  const minute = Math.floor(second / 60) % 60
-  return {
-    key: second,
-    x: xForSecond(second) ?? padding.left,
-    weight: second === toSecond('11:30') ? 'major-break' : minute === 0 ? 'hour' : 'half-hour'
-  }
-}))
+const timeGridLines = computed(() =>
+  timeGridSeconds.map((second) => {
+    const minute = Math.floor(second / 60) % 60
+    return {
+      key: second,
+      x: xForSecond(second) ?? padding.left,
+      weight: second === toSecond('11:30') ? 'major-break' : minute === 0 ? 'hour' : 'half-hour'
+    }
+  })
+)
 
-const volumeValues = computed(() => validTicks.value.map((tick, index) => tickVolumeValue(tick, validTicks.value[index - 1])))
-const averagePricePoints = computed(() => validTicks.value.map(tick => {
-  const averagePrice = cumulativeAveragePrice(tick)
-  if (averagePrice == null) return null
-  const second = tickSecond(tick)
-  return {
-    key: `${tick.timestamp}-average`,
-    x: xForSecond(second) ?? padding.left,
-    y: yForPrice(averagePrice),
-    price: averagePrice
-  }
-}).filter(item => item != null))
+const volumeValues = computed(() =>
+  validTicks.value.map((tick, index) => tickVolumeValue(tick, validTicks.value[index - 1]))
+)
+const averagePricePoints = computed(() =>
+  validTicks.value
+    .map((tick) => {
+      const averagePrice = cumulativeAveragePrice(tick)
+      if (averagePrice == null) return null
+      const second = tickSecond(tick)
+      return {
+        key: `${tick.timestamp}-average`,
+        x: xForSecond(second) ?? padding.left,
+        y: yForPrice(averagePrice),
+        price: averagePrice
+      }
+    })
+    .filter((item) => item != null)
+)
 const averagePricePath = computed(() => {
   if (!averagePricePoints.value.length) return ''
   return averagePricePoints.value
     .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
     .join(' ')
 })
-const volumeMax = computed(() => Math.max(1, ...validTicks.value.map((tick, index) => (
-  isContinuousSecond(tickSecond(tick)) ? volumeValues.value[index] ?? 0 : 0
-))))
-const auctionVolumeMax = computed(() => Math.max(1, ...validTicks.value
-  .filter(tick => isAuctionSecond(tickSecond(tick)))
-  .flatMap(tick => [auctionMatchVolume(tick), auctionUnmatchedVolume(tick)])))
-const volumeBars = computed(() => validTicks.value.map((tick, index) => {
-  const second = tickSecond(tick)
-  if (!isContinuousSecond(second)) return null
-  const x = xForSecond(second) ?? padding.left
-  const volume = volumeValues.value[index] ?? 0
-  const barHeight = volume / volumeMax.value * (volumeBottom.value - volumeTop.value)
-  const previous = validTicks.value[index - 1]
-  return {
-    key: `${tick.timestamp}-${volume}`,
-    x,
-    y: volumeBottom.value - barHeight,
-    height: Math.max(1, barHeight),
-    color: !previous || tick.price >= previous.price ? '#d92d20' : '#039855'
-  }
-}).filter(item => item != null))
+const volumeMax = computed(() =>
+  Math.max(
+    1,
+    ...validTicks.value.map((tick, index) =>
+      isContinuousSecond(tickSecond(tick)) ? (volumeValues.value[index] ?? 0) : 0
+    )
+  )
+)
+const auctionVolumeMax = computed(() =>
+  Math.max(
+    1,
+    ...validTicks.value
+      .filter((tick) => isAuctionSecond(tickSecond(tick)))
+      .flatMap((tick) => [auctionMatchVolume(tick), auctionUnmatchedVolume(tick)])
+  )
+)
+const volumeBars = computed(() =>
+  validTicks.value
+    .map((tick, index) => {
+      const second = tickSecond(tick)
+      if (!isContinuousSecond(second)) return null
+      const x = xForSecond(second) ?? padding.left
+      const volume = volumeValues.value[index] ?? 0
+      const barHeight = (volume / volumeMax.value) * (volumeBottom.value - volumeTop.value)
+      const previous = validTicks.value[index - 1]
+      return {
+        key: `${tick.timestamp}-${volume}`,
+        x,
+        y: volumeBottom.value - barHeight,
+        height: Math.max(1, barHeight),
+        color: !previous || tick.price >= previous.price ? '#d92d20' : '#039855'
+      }
+    })
+    .filter((item) => item != null)
+)
 
-const auctionVolumeBars = computed(() => validTicks.value.map((tick, index) => {
-  const second = tickSecond(tick)
-  if (!isAuctionSecond(second)) return null
-  const buyVolume = auctionBuyVolume(tick)
-  const sellVolume = auctionSellVolume(tick)
-  const matchedVolume = Math.min(buyVolume, sellVolume)
-  const unmatchedVolume = Math.abs(buyVolume - sellVolume)
-  const matchedHeight = matchedVolume / auctionVolumeMax.value * auctionVolumeHeight.value
-  const unmatchedHeight = unmatchedVolume / auctionVolumeMax.value * auctionVolumeHeight.value
-  const color = buyVolume >= sellVolume ? '#d92d20' : '#039855'
-  return {
-    key: `${tick.timestamp}-auction`,
-    x: xForSecond(second) ?? padding.left,
-    unmatchedY2: volumeTop.value + Math.max(1, unmatchedHeight),
-    matchedY2: volumeBottom.value - Math.max(1, matchedHeight),
-    color
-  }
-}).filter(item => item != null))
+const auctionVolumeBars = computed(() =>
+  validTicks.value
+    .map((tick) => {
+      const second = tickSecond(tick)
+      if (!isAuctionSecond(second)) return null
+      const buyVolume = auctionBuyVolume(tick)
+      const sellVolume = auctionSellVolume(tick)
+      const matchedVolume = Math.min(buyVolume, sellVolume)
+      const unmatchedVolume = Math.abs(buyVolume - sellVolume)
+      const matchedHeight = (matchedVolume / auctionVolumeMax.value) * auctionVolumeHeight.value
+      const unmatchedHeight = (unmatchedVolume / auctionVolumeMax.value) * auctionVolumeHeight.value
+      const color = buyVolume >= sellVolume ? '#d92d20' : '#039855'
+      return {
+        key: `${tick.timestamp}-auction`,
+        x: xForSecond(second) ?? padding.left,
+        unmatchedY2: volumeTop.value + Math.max(1, unmatchedHeight),
+        matchedY2: volumeBottom.value - Math.max(1, matchedHeight),
+        color
+      }
+    })
+    .filter((item) => item != null)
+)
 
 const backtestBsMarkers = computed<BsMarker[]>(() => {
   if (!props.events?.length) return []
   return props.events
     .map((event, index) => {
+      if (event.side !== 'B' && event.side !== 'S') return null
       const second = eventSecond(event.time)
       const x = second == null ? null : xForSecond(second)
       if (x == null || !Number.isFinite(event.price) || event.price <= 0) return null
+      const y = yForPrice(event.price)
       return {
+        key: `${event.side}-${event.time}-${index}`,
         side: event.side,
         time: event.time,
         price: event.price,
         x,
-        y: yForPrice(event.price) + index % 3 * 5,
+        y,
+        badgeX: markerBadgeX(x, index),
+        badgeY: markerBadgeY(event.side, y),
         label: markerLabel(event.side),
         reason: event.reason
       }
     })
-    .filter(item => item != null)
+    .filter((item) => item != null)
 })
 
 function formatPrice(value: number) {
@@ -346,10 +392,19 @@ function eventSecond(time: string) {
   return hour * 3600 + minute * 60 + second
 }
 
-function markerLabel(side: TradeSide) {
+function markerLabel(side: Exclude<TradeSide, 'C'>) {
   if (side === 'B') return '买'
-  if (side === 'S') return '卖'
-  return '撤'
+  return '卖'
+}
+
+function markerBadgeX(x: number, index: number) {
+  const laneOffset = ((index % 3) - 1) * 30
+  return Math.min(svgWidth.value - padding.right - 14, Math.max(padding.left + 14, x + laneOffset))
+}
+
+function markerBadgeY(side: Exclude<TradeSide, 'C'>, y: number) {
+  const preferredY = y + (side === 'B' ? 25 : -25)
+  return Math.min(plotBottom.value - 11, Math.max(plotTop + 11, preferredY))
 }
 
 function rateClassValue(value: number) {
@@ -371,13 +426,17 @@ function formatPercent(value?: number) {
 }
 
 function isContinuousSecond(second: number) {
-  return (second >= toSecond('09:30') && second <= toSecond('11:30'))
-    || (second >= toSecond('13:00') && second < toSecond('14:57'))
+  return (
+    (second >= toSecond('09:30') && second <= toSecond('11:30')) ||
+    (second >= toSecond('13:00') && second < toSecond('14:57'))
+  )
 }
 
 function isAuctionSecond(second: number) {
-  return (second >= toSecond('09:15') && second <= toSecond('09:25'))
-    || (second >= toSecond('14:57') && second <= toSecond('15:00'))
+  return (
+    (second >= toSecond('09:15') && second <= toSecond('09:25')) ||
+    (second >= toSecond('14:57') && second <= toSecond('15:00'))
+  )
 }
 
 function auctionBuyVolume(tick: MinuteTick) {
@@ -422,7 +481,7 @@ function cumulativeAveragePrice(tick: MinuteTick) {
 function tickTurnoverRate(tick: MinuteTick) {
   const floatShares = props.floatShares ?? 0
   if (floatShares <= 0 || !isContinuousSecond(tickSecond(tick))) return undefined
-  return (tick.sellerOrderId ?? 0) / floatShares * 100
+  return ((tick.sellerOrderId ?? 0) / floatShares) * 100
 }
 
 function buyAmount(tick: MinuteTick) {
@@ -442,7 +501,7 @@ function isLimitUpMatch(tick: MinuteTick) {
 function limitUpTotalBuyRate(tick: MinuteTick) {
   const floatShares = props.floatShares ?? 0
   if (floatShares <= 0) return undefined
-  return (tick.buyerOrderId ?? 0) / floatShares * 100
+  return ((tick.buyerOrderId ?? 0) / floatShares) * 100
 }
 
 function limitUpTotalBuyAmount(tick: MinuteTick) {
@@ -483,7 +542,7 @@ function nearestPointIndex(x: number) {
 function pointerX(event: PointerEvent) {
   const svg = event.currentTarget as SVGSVGElement
   const rect = svg.getBoundingClientRect()
-  return (event.clientX - rect.left) / rect.width * svgWidth.value
+  return ((event.clientX - rect.left) / rect.width) * svgWidth.value
 }
 
 function handlePointerMove(event: PointerEvent) {
@@ -507,7 +566,7 @@ function lockNearestSnapshot(event: PointerEvent) {
 
 function moveLockedSnapshot(step: number) {
   if (!points.value.length) return
-  const current = lockedIndex.value ?? (hoverX.value == null ? 0 : nearestPointIndex(hoverX.value) ?? 0)
+  const current = lockedIndex.value ?? (hoverX.value == null ? 0 : (nearestPointIndex(hoverX.value) ?? 0))
   const next = Math.min(points.value.length - 1, Math.max(0, current + step))
   lockedIndex.value = next
   hoverX.value = points.value[next].x
@@ -559,12 +618,7 @@ onBeforeUnmount(() => {
       </slot>
     </div>
     <div class="chart-wrap minute-chart-wrap has-snapshot" :style="{ height: `${height}px` }">
-      <div
-        ref="chartMain"
-        class="chart-main minute-chart-main"
-        tabindex="0"
-        @keydown="handleKeydown"
-      >
+      <div ref="chartMain" class="chart-main minute-chart-main" tabindex="0" @keydown="handleKeydown">
         <svg
           class="a-share-minute-svg"
           :viewBox="`0 0 ${svgWidth} ${height}`"
@@ -580,12 +634,7 @@ onBeforeUnmount(() => {
               <stop offset="100%" stop-color="#2563eb" stop-opacity="0.02" />
             </linearGradient>
             <clipPath id="minutePriceClip">
-              <rect
-                :x="padding.left"
-                :y="plotTop"
-                :width="plotWidth"
-                :height="plotBottom - plotTop"
-              />
+              <rect :x="padding.left" :y="plotTop" :width="plotWidth" :height="plotBottom - plotTop" />
             </clipPath>
           </defs>
 
@@ -628,10 +677,19 @@ onBeforeUnmount(() => {
 
           <g
             v-for="marker in backtestBsMarkers"
-            :key="`${marker.side}-${marker.time}`"
+            :key="marker.key"
             :class="['minute-bs-marker', marker.side.toLowerCase()]"
+            role="img"
+            :aria-label="`${marker.side === 'B' ? '买入点' : '卖出点'}，${marker.time}，${formatPrice(marker.price)}，${marker.reason}`"
           >
-            <circle :cx="marker.x" :cy="marker.y" r="5" />
+            <title>
+              {{ marker.side === 'B' ? '买入' : '卖出' }} · {{ marker.time }} · {{ formatPrice(marker.price) }} ·
+              {{ marker.reason }}
+            </title>
+            <line :x1="marker.x" :x2="marker.badgeX" :y1="marker.y" :y2="marker.badgeY" />
+            <circle :cx="marker.x" :cy="marker.y" r="4" />
+            <rect :x="marker.badgeX - 13" :y="marker.badgeY - 10" width="26" height="20" rx="4" />
+            <text :x="marker.badgeX" :y="marker.badgeY + 4">{{ marker.label }}</text>
           </g>
 
           <g v-if="activePoint" class="minute-crosshair" :class="{ locked: isSnapshotLocked }">
@@ -658,11 +716,7 @@ onBeforeUnmount(() => {
               rx="3"
               class="minute-axis-float"
             />
-            <text
-              :x="padding.left - 24"
-              :y="activePoint.y + 4"
-              class="minute-axis-float-text"
-            >
+            <text :x="padding.left - 24" :y="activePoint.y + 4" class="minute-axis-float-text">
               {{ formatPrice(activePoint.price) }}
             </text>
             <rect
@@ -673,12 +727,8 @@ onBeforeUnmount(() => {
               rx="3"
               class="minute-axis-float"
             />
-            <text
-              :x="svgWidth - padding.right + 27"
-              :y="activePoint.y + 4"
-              class="minute-axis-float-text"
-            >
-              {{ formatRate(yScale.base ? (activePoint.price - yScale.base) / yScale.base * 100 : 0) }}
+            <text :x="svgWidth - padding.right + 27" :y="activePoint.y + 4" class="minute-axis-float-text">
+              {{ formatRate(yScale.base ? ((activePoint.price - yScale.base) / yScale.base) * 100 : 0) }}
             </text>
             <rect
               :x="Math.min(svgWidth - padding.right - 94, Math.max(padding.left + 4, activePoint.x - 45))"
@@ -746,7 +796,6 @@ onBeforeUnmount(() => {
           >
             {{ formatRate(line.rate) }}
           </text>
-
         </svg>
         <div v-if="!ticks.length" class="chart-empty">{{ emptyText ?? '暂无分时数据' }}</div>
       </div>
@@ -760,13 +809,17 @@ onBeforeUnmount(() => {
             <span>匹配价</span>
             <b>{{ activePoint.tick.price.toFixed(2) }}</b>
             <span>竞价涨幅</span>
-            <b :class="rateClassValue(activePoint.price)">{{ formatRate(yScale.base ? (activePoint.price - yScale.base) / yScale.base * 100 : 0) }}</b>
+            <b :class="rateClassValue(activePoint.price)">
+              {{ formatRate(yScale.base ? ((activePoint.price - yScale.base) / yScale.base) * 100 : 0) }}
+            </b>
             <span>竞价量</span>
             <b>{{ formatTradeVolume(auctionMatchVolume(activePoint.tick)) }}</b>
             <span>竞价金额</span>
             <b>{{ formatAmount(auctionAmount(activePoint.tick)) }}</b>
             <span>未匹配量</span>
-            <b :style="{ color: auctionUnmatchedColor(activePoint.tick) }">{{ formatTradeVolume(auctionUnmatchedVolume(activePoint.tick)) }}</b>
+            <b :style="{ color: auctionUnmatchedColor(activePoint.tick) }">
+              {{ formatTradeVolume(auctionUnmatchedVolume(activePoint.tick)) }}
+            </b>
             <template v-if="isLimitUpMatch(activePoint.tick)">
               <span>涨停买额</span>
               <b class="rate-up">{{ formatAmount(limitUpTotalBuyAmount(activePoint.tick)) }}</b>
@@ -792,9 +845,7 @@ onBeforeUnmount(() => {
             <span>{{ isLimitUpBid(activePoint.tick) ? '涨停买额' : '买一额' }}</span>
             <b>{{ formatAmount(buyAmount(activePoint.tick)) }}</b>
           </div>
-          <div class="minute-snapshot-hint">
-            点击锁定，←/→ 逐 tick，Esc 取消
-          </div>
+          <div class="minute-snapshot-hint">点击锁定，←/→ 逐 tick，Esc 取消</div>
         </div>
         <div v-else class="minute-snapshot-empty">
           <strong>Tick 快照</strong>

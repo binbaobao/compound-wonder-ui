@@ -26,7 +26,7 @@ const title = computed(() => {
   if (props.scope === 'recommend') return '推荐盯盘池'
   return props.scope === 'limit' ? '当天涨停池' : '当天炸/断板池'
 })
-const scopeTabs: Array<{ value: StockScope, label: string }> = [
+const scopeTabs: Array<{ value: StockScope; label: string }> = [
   { value: 'recommend', label: '推荐' },
   { value: 'limit', label: '涨停' },
   { value: 'break', label: '炸/断板' }
@@ -45,31 +45,34 @@ function formatMarketTurnover(amount: number | null | undefined) {
 
 const filteredStocks = computed(() => {
   const keyword = props.keyword.trim().toLowerCase()
-  const rows = props.stocks.filter(stock => stock.scope === props.scope)
-    .filter(stock => {
+  const rows = props.stocks
+    .filter((stock) => stock.scope === props.scope)
+    .filter((stock) => {
       if (!keyword) return true
       return `${stock.code} ${stock.name} ${stock.boardLabel} ${stock.theme}`.toLowerCase().includes(keyword)
-  })
+    })
 
   return [...rows].sort((a, b) => {
     if (props.scope === 'recommend') {
-      return limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope)
-        || compareDesc(a.strength, b.strength)
-        || compareDesc(a.resultRate, b.resultRate)
+      return (
+        limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope) ||
+        compareDesc(a.strength, b.strength) ||
+        compareDesc(a.resultRate, b.resultRate)
+      )
     }
     if (props.scope === 'limit') {
-      return limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope)
-        || compareDesc(a.resultRate, b.resultRate)
+      return (
+        limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope) || compareDesc(a.resultRate, b.resultRate)
+      )
     }
-    return limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope)
-      || compareDesc(a.resultRate, b.resultRate)
+    return (
+      limitUpSortValue(b, props.scope) - limitUpSortValue(a, props.scope) || compareDesc(a.resultRate, b.resultRate)
+    )
   })
 })
 
 function limitUpSortValue(stock: StockPoolItem, scope: StockScope) {
-  const days = scope === 'recommend'
-    ? stock.lbc ?? stock.consecutiveLimitUpDays
-    : stock.consecutiveLimitUpDays
+  const days = scope === 'recommend' ? (stock.lbc ?? stock.consecutiveLimitUpDays) : stock.consecutiveLimitUpDays
   return Math.abs(Number(days ?? 0))
 }
 
@@ -87,7 +90,25 @@ function limitUpTypeLabel(stock: StockPoolItem) {
     4: '地天板',
     5: '天地天板'
   }
-  return stock.klineState != null ? labels[stock.klineState] ?? '' : ''
+  return stock.klineState != null ? (labels[stock.klineState] ?? '') : ''
+}
+
+/** 优先使用任务交易模式；旧接口未返回时，按 2 板及以上识别连板接力。 */
+function selectionMode(stock: StockPoolItem) {
+  if (stock.tradeMode != null) return stock.tradeMode
+  const boards = Number(stock.lbc ?? stock.consecutiveLimitUpDays ?? 0)
+  return boards >= 2 ? 1 : undefined
+}
+
+/** 根据推荐任务的交易模式返回选股策略标签。 */
+function selectionModeLabel(stock: StockPoolItem) {
+  const labels: Partial<Record<NonNullable<StockPoolItem['tradeMode']>, string>> = {
+    1: '连板接力',
+    2: '普通首板',
+    3: '小市值首板'
+  }
+  const mode = selectionMode(stock)
+  return mode == null ? '' : (labels[mode] ?? '')
 }
 
 function weekdayLabel(dateText: string) {
@@ -123,11 +144,14 @@ function handleDocumentClick(event: MouseEvent) {
   }
 }
 
-watch(() => props.tradeDate, async () => {
-  if (!dateOpen.value) return
-  await nextTick()
-  centerSelectedDate()
-})
+watch(
+  () => props.tradeDate,
+  async () => {
+    if (!dateOpen.value) return
+    await nextTick()
+    centerSelectedDate()
+  }
+)
 
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick)
@@ -168,7 +192,7 @@ onBeforeUnmount(() => {
               :value="tradeDate"
               type="date"
               @input="emit('update:tradeDate', ($event.target as HTMLInputElement).value)"
-            >
+            />
           </label>
         </div>
       </div>
@@ -176,24 +200,58 @@ onBeforeUnmount(() => {
 
     <div v-if="emotionSummary" class="stock-emotion">
       <div class="stock-emotion-highlight">
-        <span>最高 <b>{{ emotionSummary.highestLimitUp }}板</b></span>
-        <span v-if="emotionSummary.leaderCode">龙头：<b>{{ emotionSummary.leaderName || emotionSummary.leaderCode }}</b></span>
+        <span>
+          最高
+          <b>{{ emotionSummary.highestLimitUp }}板</b>
+        </span>
+        <span v-if="emotionSummary.leaderCode">
+          龙头：
+          <b>{{ emotionSummary.leaderName || emotionSummary.leaderCode }}</b>
+        </span>
       </div>
       <div class="stock-emotion-row">
-        <span>涨停 <b class="emotion-rise">{{ emotionSummary.limitUpCount }}</b></span>
-        <span>连板 <b class="emotion-rise">{{ emotionSummary.consecutiveLimitUpCount }}</b></span>
+        <span>
+          涨停
+          <b class="emotion-rise">{{ emotionSummary.limitUpCount }}</b>
+        </span>
+        <span>
+          连板
+          <b class="emotion-rise">{{ emotionSummary.consecutiveLimitUpCount }}</b>
+        </span>
       </div>
       <div class="stock-emotion-row">
-        <span>炸板 <b class="emotion-fall">{{ emotionSummary.explodeCount }}</b></span>
-        <span>跌停 <b class="emotion-fall">{{ emotionSummary.limitDownCount ?? 0 }}</b></span>
+        <span>
+          炸板
+          <b class="emotion-fall">{{ emotionSummary.explodeCount }}</b>
+        </span>
+        <span>
+          跌停
+          <b class="emotion-fall">{{ emotionSummary.limitDownCount ?? 0 }}</b>
+        </span>
       </div>
       <div class="stock-emotion-row compact">
-        <span>连板率 <b>{{ emotionSummary.consecutiveRate.toFixed(2) }}%</b></span>
-        <span>炸板率 <b>{{ emotionSummary.explodeRate.toFixed(2) }}%</b></span>
+        <span>
+          连板率
+          <b>{{ emotionSummary.consecutiveRate.toFixed(2) }}%</b>
+        </span>
+        <span>
+          炸板率
+          <b>{{ emotionSummary.explodeRate.toFixed(2) }}%</b>
+        </span>
       </div>
       <div class="stock-emotion-highlight stock-emotion-market">
-        <span>涨 / 跌 <b><em class="emotion-rise">{{ emotionSummary.risingCount }}</em> / <em class="emotion-fall">{{ emotionSummary.fallingCount }}</em></b></span>
-        <span>成交额 <b>{{ formatMarketTurnover(emotionSummary.allMarketTurnoverAmount) }}</b></span>
+        <span>
+          涨 / 跌
+          <b>
+            <em class="emotion-rise">{{ emotionSummary.risingCount }}</em>
+            /
+            <em class="emotion-fall">{{ emotionSummary.fallingCount }}</em>
+          </b>
+        </span>
+        <span>
+          成交额
+          <b>{{ formatMarketTurnover(emotionSummary.allMarketTurnoverAmount) }}</b>
+        </span>
       </div>
     </div>
 
@@ -213,7 +271,13 @@ onBeforeUnmount(() => {
 
     <div class="panel-head">
       <div class="stock-title-group">
-        <button v-if="scope === 'recommend'" class="reselect-button" type="button" :disabled="reselecting" @click="emit('reselect')">
+        <button
+          v-if="scope === 'recommend'"
+          class="reselect-button"
+          type="button"
+          :disabled="reselecting"
+          @click="emit('reselect')"
+        >
           <RefreshCw :size="13" :class="{ spinning: reselecting }" />
           <span>{{ reselecting ? '选股中' : '重新选股' }}</span>
         </button>
@@ -230,9 +294,8 @@ onBeforeUnmount(() => {
           type="search"
           placeholder="代码、名称、连板、题材"
           @input="emit('update:keyword', ($event.target as HTMLInputElement).value)"
-        >
+        />
       </label>
-
     </div>
 
     <div class="stock-list">
@@ -251,20 +314,47 @@ onBeforeUnmount(() => {
         <span class="stock-side">
           <span class="stock-board-label">
             <b :class="stock.scope">
-              {{ scope === 'recommend' ? `推荐 ${stock.boardLabel}` : ((stock.consecutiveLimitUpDays ?? 0) < 0 ? `${stock.boardLabel}断` : stock.boardLabel) }}
+              {{
+                scope === 'recommend'
+                  ? `推荐 ${stock.boardLabel}`
+                  : (stock.consecutiveLimitUpDays ?? 0) < 0
+                    ? `${stock.boardLabel}断`
+                    : stock.boardLabel
+              }}
             </b>
           </span>
           <span class="stock-meta">
+            <i
+              v-if="scope === 'recommend' && selectionModeLabel(stock)"
+              class="selection-mode-tag"
+              :class="`selection-mode-${selectionMode(stock)}`"
+            >
+              {{ selectionModeLabel(stock) }}
+            </i>
             <i v-if="limitUpTypeLabel(stock)" class="status-limit-type">{{ limitUpTypeLabel(stock) }}</i>
-            <span v-if="(scope === 'recommend' || scope === 'break') && (stock.klineState != null && stock.klineState >= 11 && stock.klineState <= 13 || (stock.consecutiveLimitUpDays ?? 0) < 0)" class="stock-status-tags">
-              <i v-if="stock.klineState != null && stock.klineState >= 11 && stock.klineState <= 13" class="status-break">炸板</i>
+            <span
+              v-if="
+                (scope === 'recommend' || scope === 'break') &&
+                ((stock.klineState != null && stock.klineState >= 11 && stock.klineState <= 13) ||
+                  (stock.consecutiveLimitUpDays ?? 0) < 0)
+              "
+              class="stock-status-tags"
+            >
+              <i
+                v-if="stock.klineState != null && stock.klineState >= 11 && stock.klineState <= 13"
+                class="status-break"
+              >
+                炸板
+              </i>
               <i v-if="(stock.consecutiveLimitUpDays ?? 0) < 0" class="status-broken">断板</i>
             </span>
             <small>
-              <template v-if="scope === 'recommend'"><i class="score-tag">涨停分 {{ stock.strength }}</i></template>
-              <template v-if="stock.rz === 1"> · 融</template>
-              <template v-if="stock.zz === 1"> · 债</template>
-              <template v-if="stock.st === 1"> · ST</template>
+              <template v-if="scope === 'recommend'">
+                <i class="score-tag">涨停分 {{ stock.strength }}</i>
+              </template>
+              <template v-if="stock.rz === 1">· 融</template>
+              <template v-if="stock.zz === 1">· 债</template>
+              <template v-if="stock.st === 1">· ST</template>
             </small>
           </span>
         </span>

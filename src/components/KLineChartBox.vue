@@ -130,7 +130,7 @@ function formatVolume(value?: number) {
 }
 
 function findSourceBar(current: ChartBar) {
-  return props.bars.find(bar => bar.timestamp === current.timestamp) ?? current
+  return props.bars.find((bar) => bar.timestamp === current.timestamp) ?? current
 }
 
 function createTooltip(current: ChartBar) {
@@ -158,14 +158,14 @@ function createTooltip(current: ChartBar) {
 
 function formatCycleReturn(current: ChartBar) {
   const source = findSourceBar(current)
-  const currentIndex = props.bars.findIndex(bar => bar.timestamp === source.timestamp)
+  const currentIndex = props.bars.findIndex((bar) => bar.timestamp === source.timestamp)
   const lastIndex = props.bars.length - 1
   const lastBar = props.bars[lastIndex]
   if (currentIndex < 0 || !lastBar || !source.close) {
     return '(0|0.00%)'
   }
   const period = Math.max(0, lastIndex - currentIndex)
-  const rate = (lastBar.close - source.close) / source.close * 100
+  const rate = ((lastBar.close - source.close) / source.close) * 100
   return `(${period}|${rate.toFixed(2)}%)`
 }
 
@@ -179,15 +179,18 @@ function updateSelectedDateMarker() {
   if (!chart.value) return
   clearSelectedDateMarker()
   if (!props.markerTimestamp || props.chartType === 'area') return
-  const source = props.bars.find(bar => bar.timestamp === props.markerTimestamp)
+  const source = props.bars.find((bar) => bar.timestamp === props.markerTimestamp)
   if (!source) return
-  const overlayId = chart.value.createOverlay({
-    name: SELECTED_DATE_MARKER,
-    lock: true,
-    visible: true,
-    zLevel: 10,
-    points: [{ timestamp: source.timestamp, value: source.high }]
-  }, 'candle_pane')
+  const overlayId = chart.value.createOverlay(
+    {
+      name: SELECTED_DATE_MARKER,
+      lock: true,
+      visible: true,
+      zLevel: 10,
+      points: [{ timestamp: source.timestamp, value: source.high }]
+    },
+    'candle_pane'
+  )
   markerOverlayId.value = Array.isArray(overlayId) ? overlayId[0] : overlayId
 }
 
@@ -207,7 +210,7 @@ function updateNativeCrosshair() {
   const coordinate = chart.value?.convertToPixel(
     { timestamp: source.timestamp, value: source.close },
     { paneId: 'candle_pane' }
-  ) as { x?: number, y?: number }
+  ) as { x?: number; y?: number }
   if (typeof coordinate?.x !== 'number' || typeof coordinate?.y !== 'number') return
   chart.value.executeAction(ActionType.OnCrosshairChange, {
     x: coordinate.x,
@@ -294,7 +297,8 @@ onMounted(() => {
     locale: 'zh-CN-custom',
     layout: props.showVolume ? candleLayout : undefined,
     customApi: {
-      formatDate: (_dateTimeFormat, timestamp) => props.chartType === 'area' ? formatTimeOnly(timestamp) : formatDateOnly(timestamp)
+      formatDate: (_dateTimeFormat, timestamp) =>
+        props.chartType === 'area' ? formatTimeOnly(timestamp) : formatDateOnly(timestamp)
     },
     styles: {
       grid: {
@@ -344,10 +348,14 @@ onMounted(() => {
   })
   applyData()
   if (props.showVolume) {
-    chart.value.createIndicator({ name: 'MA', shortName: '均线', calcParams: [5, 10, 20, 60] }, true, { id: 'candle_pane' })
+    chart.value.createIndicator({ name: 'MA', shortName: '均线', calcParams: [5, 10, 20, 60] }, true, {
+      id: 'candle_pane'
+    })
   }
   if (props.showVolume) {
-    chart.value.createIndicator({ name: 'VOL', shortName: '成交量', shouldFormatBigNumber: false }, false, { height: 86 })
+    chart.value.createIndicator({ name: 'VOL', shortName: '成交量', shouldFormatBigNumber: false }, false, {
+      height: 86
+    })
   }
   chart.value.subscribeAction(ActionType.OnCrosshairChange, handleCrosshairChange)
   updateSelectedDateMarker()
